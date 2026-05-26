@@ -8,13 +8,6 @@
     "name": "DavidBlackCN",
     "url": "https://github.com/DavidBlackCN"
   },
-  "contributors": [
-    {
-      "name": "风花叶",
-      "url": "https://github.com/khiqwq",
-      "role": "original_author"
-    }
-  ],
   "license": "GPL-3.0-or-later",
   "urls": {
     "repository": "https://github.com/DavidBlackCN/maibot-owner-auth-plugin",
