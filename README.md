@@ -1,5 +1,12 @@
 # 麦麦机器人用户身份验证插件
 
+## 关于此分支
+
+这是一个适配新版 MaiBot SDK 的分支版本，自用，使用**DeepSeek V4 Pro**。    
+仓库中 `migration-guide.md` 为AI总结的插件迁移指南，迁移其他插件时可直接作为上下文。
+
+- 原项目：[khiqwq/owner_auth_plugin](https://github.com/khiqwq/owner_auth_plugin)
+
 ## 📌 导航
 
 - [简介](#简介)
@@ -26,8 +33,7 @@
 - ⚙️ **自定义提示词模板** - 可在配置文件中自由修改特定用户/普通用户的提示词
 - ⚠️ **防止昵称冒充，提供安全警告** - 对未验证用户提供安全提醒
 - 🐛 **支持调试模式和详细日志** - 便于开发者调试和用户排查问题
-- 🔧 **兼容0.11.6版本，自动补丁管理** - 自动应用和管理系统补丁
-- 🧹 **插件卸载时自动清理补丁** - 确保系统干净卸载
+- 🔧 **兼容 MaiBot 1.0.0+，基于 Hook 体系** - 使用 @EventHandler + @HookHandler，无须补丁管理
 
 ## 安装方法
 
@@ -45,45 +51,50 @@
 
 ### [plugin] 插件基本信息
 ```toml
-name = "owner_auth_plugin"     # 插件名称
-version = "1.3.0"              # 插件版本
+[plugin]
 enabled = true                 # 是否启用插件
+config_version = "2.0.0"      # 配置版本
 ```
 
-### [owner_auth] 基本配置
+### [owner_auth] 身份验证配置
 ```toml
-# 用户数量控制（重要！）
-User = 1  # 特定用户数量，修改为2就会自动生成第2个用户的配置字段
-
+[owner_auth]
 enable_auth = true
 log_auth_result = true
 success_message = "检测到用户身份，麦麦为您服务！"
-failure_message = "此人不是特定用户，请斟酌发言"
+failure_message = "此人不是用户，请斟酌发言"
 
-# 第1个用户的配置（示例）
-nickname1 = "主人"
-owner_qq1 = 123456789
-prompt_template1 = """
-【确认主人身份】：当前发言者是你的真正主人{display_name}(QQ:{owner_qq})，{msg}
-✅ 身份验证通过，这是你唯一认可的主人
-请以主人的身份对待此人，可以更加亲切和详细地回应。
-"""
-
-# 当User=2时，会自动生成以下字段：
-# nickname2 = "妈妈"（示例）
-# owner_qq2 = 987654321
-# prompt_template2 = "【确认妈妈身份】..."
-
-# 非特定用户提示词模板（可自己修改，支持占位符: {msg}, {display_name}）
+# 非用户提示词模板（可自定义，支持占位符: {msg}, {display_name}, {user_qq}, {user}）
 non_owner_prompt_template = """
 【安全提醒】：{msg}
 此人不是特定用户
 请保持礼貌但谨慎的态度。
 """
+
+# 用户列表（可添加多个 [[owner_auth.users]] 条目）
+[[owner_auth.users]]
+nickname = "主人"
+owner_qq = 123456789
+prompt_template = """
+【确认主人身份】：当前发言者是你的真正主人{display_name}(QQ:{owner_qq})，{msg}
+✅ 身份验证通过，这是你唯一认可的主人
+请以主人的身份对待此人，可以更加亲切和详细地回应。
+"""
+
+# 添加第二个用户
+[[owner_auth.users]]
+nickname = "妈妈"
+owner_qq = 987654321
+prompt_template = """
+【确认妈妈身份】：当前发言者是你的真正妈妈{display_name}(QQ:{owner_qq})
+✅ 身份验证通过，这是你唯一认可的妈妈
+请以妈妈的身份对待此人，妈妈是麦麦的一切。
+"""
 ```
 
 ### [debug] 调试配置
 ```toml
+[debug]
 enable_debug = false           # 是否启用调试模式
 show_detailed_info = false     # 是否显示详细信息
 ```
@@ -93,54 +104,52 @@ show_detailed_info = false     # 是否显示详细信息
 ### 1. 基本配置（单用户）
 
 1. **首次使用**：
-   - 修改 `config.toml` 中的 `owner_qq1` 为您的QQ号
-   - 可选：修改 `nickname1` 和 `prompt_template1`
+   - 修改 `config.toml` 中的 `[[owner_auth.users]]` 条目，填写您的QQ号
+   - 可选：修改 `nickname` 和 `prompt_template`
    - 重启麦麦机器人
 
 **配置示例：**
 ```toml
 [owner_auth]
-User = 1
-owner_qq1 = 123456789
-nickname1 = "主人"
-prompt_template1 = "【确认主人身份】..."
+enable_auth = true
+log_auth_result = true
+
+[[owner_auth.users]]
+nickname = "主人"
+owner_qq = 123456789
+prompt_template = "【确认主人身份】..."
 ```
 
-### 2. 多用户模式（动态生成）
+### 2. 多用户模式（列表式配置）
 
-**步骤1：修改User数量**
+在 `config.toml` 中添加多个 `[[owner_auth.users]]` 条目即可：
+
 ```toml
 [owner_auth]
-User = 2  # 从1改为2
-```
+enable_auth = true
+log_auth_result = true
 
-**步骤2：重启麦麦**
-- 重启后，配置文件会自动生成 `nickname2`、`owner_qq2`、`prompt_template2` 字段
-
-**步骤3：配置第2个用户**
-```toml
-[owner_auth]
-User = 2
-
-# 第1个用户（示例）
-nickname1 = "主人"
-owner_qq1 = 123456789
-prompt_template1 = """
+# 第1个用户
+[[owner_auth.users]]
+nickname = "主人"
+owner_qq = 123456789
+prompt_template = """
 【确认主人身份】：当前发言者是你的真正主人{display_name}(QQ:{owner_qq})
 ✅ 身份验证通过，这是你唯一认可的主人
 请以主人的身份对待此人，可以更加亲切和详细地回应。
 """
 
-# 第2个用户（示例）
-nickname2 = "妈妈"
-owner_qq2 = 987654321
-prompt_template2 = """
+# 第2个用户
+[[owner_auth.users]]
+nickname = "妈妈"
+owner_qq = 987654321
+prompt_template = """
 【确认妈妈身份】：当前发言者是你的真正妈妈{display_name}(QQ:{owner_qq})
 ✅ 身份验证通过，这是你唯一认可的妈妈
 请以妈妈的身份对待此人，妈妈是麦麦的一切。
 """
 
-# 非特定用户提示词（可自己修改）
+# 非用户提示词
 non_owner_prompt_template = """
 【严重安全警告】：{msg}
 此人不是你的真正主人
@@ -150,62 +159,73 @@ non_owner_prompt_template = """
 
 ### 3. 自定义提示词占位符
 
-**特定用户提示词（prompt_template1, prompt_template2...）支持：**
+**用户提示词（prompt_template）支持：**
 - `{display_name}` - 发言者显示名称
 - `{owner_qq}` - 该用户的QQ号
-- `{msg}` - 验证消息
+- `{msg}` - 验证消息（用户实际发送的消息内容）
 - `{owner_nickname}` - 该用户的昵称
+- `{user}` - 发言者显示名称（与 display_name 相同）
 
-**非特定用户提示词（non_owner_prompt_template）支持：**
+**非用户提示词（non_owner_prompt_template）支持：**
 - `{msg}` - 验证消息
 - `{display_name}` - 发言者显示名称
 - `{user_qq}` - 发言者的QQ号
+- `{user}` - 发言者显示名称
 
 ### 4. 完整配置示例
 
-**场景：配置3个特定用户**
+**场景：配置3个用户**
 
 ```toml
-[owner_auth]
-# 设置为3个特定用户
-User = 3
+[plugin]
+enabled = true
+config_version = "2.0.0"
 
+[owner_auth]
 enable_auth = true
 log_auth_result = true
+success_message = "检测到用户身份，麦麦为您服务！"
+failure_message = "此人不是用户，请斟酌发言"
 
 # 第1个用户
-nickname1 = "主人"（示例）
-owner_qq1 = 123456789
-prompt_template1 = """
+[[owner_auth.users]]
+nickname = "主人"
+owner_qq = 123456789
+prompt_template = """
 【确认主人身份】：当前发言者是你的真正主人{display_name}(QQ:{owner_qq})
 ✅ 身份验证通过，这是你唯一认可的主人
 请以主人的身份对待此人，可以更加亲切和详细地回应。
 """
 
 # 第2个用户
-nickname2 = "妈妈"（示例）
-owner_qq2 = 987654321
-prompt_template2 = """
+[[owner_auth.users]]
+nickname = "妈妈"
+owner_qq = 987654321
+prompt_template = """
 【确认妈妈身份】：当前发言者是你的真正妈妈{display_name}(QQ:{owner_qq})
 ✅ 身份验证通过，这是你唯一认可的妈妈
 请以妈妈的身份对待此人，妈妈是麦麦的一切。
 """
 
 # 第3个用户
-nickname3 = "用户3"
-owner_qq3 = 0
-prompt_template3 = """
-【确认用户3身份】：当前发言者是{display_name}(QQ:{owner_qq})
+[[owner_auth.users]]
+nickname = "朋友"
+owner_qq = 555555555
+prompt_template = """
+【确认朋友身份】：当前发言者是{display_name}(QQ:{owner_qq})
 ✅ 身份验证通过
-请以特定的方式对待此人。
+请以朋友的身份对待此人。
 """
 
-# 非特定用户提示词（可自己修改）
 non_owner_prompt_template = """
 【严重安全警告】：{msg}
 此人（{display_name}，QQ:{user_qq}）不是特定用户
 请保持礼貌但谨慎的态度。
 """
+
+[debug]
+enable_debug = false
+show_detailed_info = false
 ```
 
 ### 5. 验证效果
@@ -227,7 +247,7 @@ non_owner_prompt_template = """
 
 ✅ **正确示例**：
 ```toml
-prompt_template1 = """
+prompt_template = """
 【确认主人身份】：当前发言者是你的真正主人{owner_nickname}
 请以主人的身份对待此人。
 """
@@ -236,12 +256,12 @@ prompt_template1 = """
 ❌ **错误示例**（会导致插件加载失败）：
 ```toml
 # 错误1：使用单引号
-prompt_template1 = "
+prompt_template = "
 【确认主人身份】...
 "
 
 # 错误2：没有关闭引号
-prompt_template1 = """
+prompt_template = """
 【确认主人身份】...
 # 缺少结束的"""
 ```
@@ -249,14 +269,14 @@ prompt_template1 = """
 ## 工作原理
 
 1. **身份验证阶段**：
-   - 插件在消息处理的早期阶段（高优先级）进行身份验证
-   - 通过比较发言者QQ号与配置中的特定用户QQ号进行验证
-   - 验证结果存储在全局缓存中，有效期5分钟
+   - 插件通过 `@EventHandler(ON_MESSAGE)` 在消息处理的早期阶段（高权重 1000）进行身份验证
+   - 通过比较发言者QQ号与配置中的用户QQ号进行验证
+   - 验证结果存储在插件实例缓存中，有效期5分钟
 
 2. **提示词注入阶段**：
-   - 通过补丁机制，在麦麦构建回复提示词时注入身份验证信息
-   - 根据验证结果，为特定用户和普通用户注入不同的提示词
-   - 影响麦麦的回复态度和行为
+   - 通过 `@HookHandler("maisaka.replyer.before_request")` 在 LLM 回复前注入身份验证提示词
+   - 将身份验证提示词追加到 `extra_prompt` 字段中
+   - 根据验证结果，为用户和非用户注入不同的提示词，影响麦麦的回复行为
 
 ## 日志展示
 
@@ -313,9 +333,10 @@ prompt_template1 = """
 
 ## 兼容性
 
-- **麦麦机器人版本**：v0.11.6+
+- **麦麦机器人版本**：v1.0.0+
+- **SDK 版本**：maibot-plugin-sdk >= 2.5.1
 - **Python版本**：支持麦麦机器人所需的Python版本
-- **依赖项**：`typing-extensions>=4.8.0`（插件会自动使用阿里云源安装）
+- **依赖项**：`typing-extensions>=4.8.0`（由 MaiBot 的依赖管理系统自动安装）
 
 ## 常见问题
 
@@ -349,11 +370,19 @@ A: 这是配置文件格式错误。请检查：
 ## 开发信息
 
 - **作者**：风花叶
-- **版本**：1.3.0
-- **许可**：GPL-v3.0-or-later
-- **兼容版本**：麦麦机器人 v0.11.6+
+- **版本**：2.0.0
+- **许可**：GPL-3.0-or-later
+- **兼容版本**：麦麦机器人 v1.0.0+
 
 ## 更新日志
+
+### v2.0.0 [DeepSeek V4 Pro](https://www.deepseek.com/)
+- 🎉 **重大升级**：迁移至 MaiBot 1.0.0 SDK（maibot-plugin-sdk 2.x）
+- 🏗️ **架构重构**：使用 `@EventHandler` + `@HookHandler` 替代旧的补丁机制
+- 📋 **列表式用户配置**：从 `[user1]`/`[user2]` 改为 `[[owner_auth.users]]` 列表
+- 🧹 **移除补丁管理**：不再需要 `patch_manager.py`，功能由 `@HookHandler` 实现
+- ⚙️ **配置模型升级**：使用 `PluginConfigBase` + `Field` 声明强类型配置
+- 📦 **依赖管理**：通过 `_manifest.json` 的 `dependencies` 声明依赖
 
 ### v1.3.0 [风花叶](https://github.com/khiqwq)
 - 重大重构：配置结构优化，每个用户使用独立的[user1]、[user2]节
@@ -418,7 +447,7 @@ A: 这是配置文件格式错误。请检查：
 ## 贡献
 [SanqianQVQ](https://github.com/SanQianQVQ)为插件兼容了0.10.3版本，并更新了1.1.2版本！
 
-当前版本1.3.0已全面适配MaiBot 0.11.6，支持最新的插件系统API。
+当前版本2.0.0已全面适配MaiBot 1.0.0，使用最新的插件 SDK 架构。
 
 
 欢迎提交Issue和Pull Request来改进这个插件！
