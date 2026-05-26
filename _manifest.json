@@ -5,13 +5,20 @@
   "name": "主人身份验证插件 (Owner Authentication Plugin)",
   "description": "为麦麦机器人提供用户身份验证功能，支持多用户独立配置，自定义提示词模板，兼容MaiBot 1.0.0+",
   "author": {
-    "name": "风花叶",
-    "url": "https://github.com/khiqwq"
+    "name": "DavidBlackCN",
+    "url": "https://github.com/DavidBlackCN"
   },
+  "contributors": [
+    {
+      "name": "风花叶",
+      "url": "https://github.com/khiqwq",
+      "role": "original_author"
+    }
+  ],
   "license": "GPL-3.0-or-later",
   "urls": {
-    "repository": "https://github.com/khiqwq/owner_auth_plugin",
-    "homepage": "https://github.com/khiqwq"
+    "repository": "https://github.com/DavidBlackCN/maibot-owner-auth-plugin",
+    "homepage": "https://github.com/DavidBlackCN/maibot-owner-auth-plugin"
   },
   "host_application": {
     "min_version": "1.0.0",
