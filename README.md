@@ -269,7 +269,7 @@ prompt_template = """
 ## 工作原理
 
 1. **身份验证阶段**：
-   - 插件通过 `@EventHandler(ON_MESSAGE)` 在消息处理的早期阶段（高权重 1000）进行身份验证
+   - 插件通过 `@HookHandler("chat.receive.after_process")` 在消息预处理完成后进行身份验证
    - 通过比较发言者QQ号与配置中的用户QQ号进行验证
    - 验证结果存储在插件实例缓存中，有效期5分钟
 
@@ -370,11 +370,17 @@ A: 这是配置文件格式错误。请检查：
 ## 开发信息
 
 - **作者**：风花叶
-- **版本**：2.0.0
+- **版本**：2.0.1
 - **许可**：GPL-3.0-or-later
 - **兼容版本**：麦麦机器人 v1.0.0+
 
 ## 更新日志
+
+### v2.0.1 [DeepSeek V4 Pro](https://www.deepseek.com/)
+- 🐛 **修复消息拦截不生效**：`@EventHandler(EventType.ON_MESSAGE)` 在 MaiBot 1.0.0 消息管线中不触发，改为 `@HookHandler("chat.receive.after_process")`
+- 🐛 **修复消息字段名不匹配**：实际消息结构为 `message.message_info.user_info`（三层嵌套），适配真实字段 `user_id`、`raw_message` 等
+- ✨ **`enable_private_inject` 生效**：该配置项之前被定义但从未使用，现在非私聊环境可按配置跳过 prompt 注入
+- 🔍 **增强诊断日志**：`on_load` 时强制输出用户列表，首次收到消息时 dump 完整消息结构，便于排查字段映射问题
 
 ### v2.0.0 [DeepSeek V4 Pro](https://www.deepseek.com/)
 - 🎉 **重大升级**：迁移至 MaiBot 1.0.0 SDK（maibot-plugin-sdk 2.x）
@@ -447,7 +453,7 @@ A: 这是配置文件格式错误。请检查：
 ## 贡献
 [SanqianQVQ](https://github.com/SanQianQVQ)为插件兼容了0.10.3版本，并更新了1.1.2版本！
 
-当前版本2.0.0已全面适配MaiBot 1.0.0，使用最新的插件 SDK 架构。
+当前版本2.0.1已全面适配MaiBot 1.0.0，使用最新的插件 SDK 架构。
 
 
 欢迎提交Issue和Pull Request来改进这个插件！

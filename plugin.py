@@ -13,10 +13,11 @@
 - 兼容 MaiBot 1.0.0+
 
 更新记录：
-v2.0.0 - 迁移至 MaiBot SDK 2.x，使用 @EventHandler + @HookHandler 架构，列表式用户配置
+v2.0.1 - 修复消息拦截不触发 & 字段名不匹配问题，enable_private_inject 生效
+v2.0.0 - 迁移至 MaiBot SDK 2.x，使用 @HookHandler 架构，列表式用户配置
 
 作者：风花叶、SanQianQVQ
-版本：2.0.0
+版本：2.0.1
 许可：GPL-3.0-or-later
 兼容版本：麦麦机器人 v1.0.0+
 """
@@ -25,13 +26,12 @@ import time
 from typing import Any, TypedDict
 
 from maibot_sdk import (
-    EventHandler,
     Field,
     HookHandler,
     MaiBotPlugin,
     PluginConfigBase,
 )
-from maibot_sdk.types import EventType, HookMode, HookOrder
+from maibot_sdk.types import HookMode, HookOrder
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +49,7 @@ class AuthInfo(TypedDict, total=False):
     user_qq: str
     user_message: str
     person_name: str
+    allow_inject: bool
 
 
 # ---------------------------------------------------------------------------
@@ -153,8 +154,17 @@ class OwnerAuthPlugin(MaiBotPlugin):
         """插件加载时初始化。"""
         self._auth_cache: dict[str, AuthInfo] = {}
         self._last_auth_info: AuthInfo | None = None
+        self._first_message_logged: bool = False
         if self.config.plugin.enabled:
             self.ctx.logger.info("[OwnerAuth] 插件已加载，身份验证已就绪")
+            # 强制输出当前加载到的用户列表，用于诊断配置是否被正确读取
+            users = self.config.owner_auth.users
+            self.ctx.logger.info("[OwnerAuth] 已配置 %d 个用户", len(users))
+            for idx, u in enumerate(users, start=1):
+                self.ctx.logger.info(
+                    "[OwnerAuth] 用户%d: nickname=%s, owner_qq=%s",
+                    idx, u.nickname, u.owner_qq,
+                )
         else:
             self.ctx.logger.info("[OwnerAuth] 插件已加载，但当前处于禁用状态")
 
@@ -200,25 +210,40 @@ class OwnerAuthPlugin(MaiBotPlugin):
             self.ctx.logger.debug(msg)
 
     # ------------------------------------------------------------------
-    # @EventHandler — 身份验证
+    # @HookHandler — 消息身份验证（替代 @EventHandler ON_MESSAGE）
     # ------------------------------------------------------------------
 
-    @EventHandler(
-        "owner_auth_handler",
-        description="用户身份验证事件处理器，在收到消息时验证发言者QQ号",
-        event_type=EventType.ON_MESSAGE,
-        weight=1000,
+    @HookHandler(
+        "chat.receive.after_process",
+        mode=HookMode.OBSERVE,
+        name="owner_auth_handler",
+        description="用户身份验证处理器，在收到消息后验证发言者QQ号",
+        order=HookOrder.EARLY,
     )
-    async def handle_message_auth(self, message: dict[str, Any], **kwargs: Any) -> None:
-        """ON_MESSAGE 事件：验证发言者身份并缓存结果。"""
-        del kwargs
+    async def handle_message_auth(self, **kwargs: Any) -> None:
+        """chat.receive.after_process Hook：验证发言者身份并缓存结果。"""
+        message: dict[str, Any] = kwargs.get("message", {})
+        if not message:
+            return
+
+        # 首次收到消息时 dump 消息结构，用于诊断
+        if not self._first_message_logged:
+            self._first_message_logged = True
+            msg_info = message.get("message_info", {})
+            user_info = msg_info.get("user_info", {}) if isinstance(msg_info, dict) else {}
+            self.ctx.logger.info(
+                "[OwnerAuth] 首次消息结构诊断: message keys=%s, message_info keys=%s, user_info keys=%s",
+                list(message.keys()),
+                list(msg_info.keys()) if isinstance(msg_info, dict) else type(msg_info).__name__,
+                list(user_info.keys()) if isinstance(user_info, dict) else type(user_info).__name__,
+            )
 
         if not self.config.plugin.enabled:
             return
 
         cfg = self.config.owner_auth
         if not cfg.enable_auth:
-            self._debug_log("[OwnerAuth] 身份验证已禁用，跳过")
+            self.ctx.logger.info("[OwnerAuth] 身份验证已禁用，跳过")
             return
 
         users = cfg.users
@@ -237,23 +262,28 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 self._debug_log(f"[OwnerAuth] 用户{idx} QQ号无效或未配置: {qq}")
 
         if not owners_dict:
+            self.ctx.logger.warning("[OwnerAuth] 未加载到任何有效用户（请检查 config.toml 中 owner_qq 是否配置正确）")
             return
 
         # 提取消息中的用户信息
-        msg_base = message.get("message_base_info", {})
-        user_id = msg_base.get("user_id")
-        user_nickname = str(msg_base.get("user_nickname", "未知用户") or "未知用户")
-        user_cardname = str(msg_base.get("user_cardname", "") or "")
+        msg_info = message.get("message_info", {})
+        user_info = msg_info.get("user_info", {}) if isinstance(msg_info, dict) else {}
+        user_id = user_info.get("user_id")
+        user_nickname = str(user_info.get("user_nickname", "未知用户") or "未知用户")
+        user_cardname = str(user_info.get("user_cardname", "") or "")
 
         if self.config.debug.enable_debug:
-            preview = str(message.get("plain_text", ""))[:100]
+            preview = str(message.get("raw_message", ""))[:100]
             self.ctx.logger.debug(
                 "[OwnerAuth] DEBUG: user_id=%s, nickname=%s, cardname=%s, msg=%s",
                 user_id, user_nickname, user_cardname, preview,
             )
 
         if not user_id:
-            self._debug_log("[OwnerAuth] 无法获取 user_id，跳过验证")
+            self.ctx.logger.info(
+                "[OwnerAuth] 无法获取 user_id，user_info keys=%s",
+                list(user_info.keys()) if user_info else "EMPTY",
+            )
             return
 
         try:
@@ -263,7 +293,19 @@ class OwnerAuthPlugin(MaiBotPlugin):
             return
 
         display_name = user_cardname or user_nickname
-        user_message = str(message.get("plain_text", "") or msg_base.get("raw_message", ""))
+        user_message = str(message.get("raw_message", "") or msg_info.get("raw_message", ""))
+
+        # 根据 enable_private_inject 和聊天类型决定是否允许注入提示词
+        _allow_inject = True
+        if not cfg.enable_private_inject:
+            chat_type = str(
+                user_info.get("chat_type", "")
+                or msg_info.get("chat_type", "")
+                or message.get("chat_type", "")
+            )
+            if chat_type and chat_type.lower() != "private":
+                _allow_inject = False
+                self._debug_log("[OwnerAuth] 非私聊环境且 enable_private_inject=false，将跳过 prompt 注入")
 
         if user_id_int in owners_dict:
             # ---- 用户匹配成功 ----
@@ -291,6 +333,7 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 "user_qq": str(user_id),
                 "user_message": user_message,
                 "person_name": "",
+                "allow_inject": _allow_inject,
             })
         else:
             # ---- 非用户 ----
@@ -308,6 +351,7 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 "user_qq": str(user_id),
                 "user_message": user_message,
                 "person_name": "",
+                "allow_inject": _allow_inject,
             })
 
     # ------------------------------------------------------------------
@@ -339,6 +383,7 @@ class OwnerAuthPlugin(MaiBotPlugin):
         """从最近的身份验证缓存构建注入提示词。
 
         优先使用 self._last_auth_info，如果过期则尝试从缓存中找最新的。
+        如果 allow_inject 为 False（enable_private_inject 关闭且非私聊），跳过注入。
         """
         info = self._last_auth_info
         if info is None:
@@ -348,6 +393,11 @@ class OwnerAuthPlugin(MaiBotPlugin):
         age = time.time() - info.get("timestamp", 0)
         if age > 300:
             self._last_auth_info = None
+            return None
+
+        # 检查是否允许注入（受 enable_private_inject 控制）
+        if not info.get("allow_inject", True):
+            self._debug_log("[OwnerAuth] 当前聊天环境不允许注入提示词，跳过")
             return None
 
         user_message = str(info.get("user_message", ""))
