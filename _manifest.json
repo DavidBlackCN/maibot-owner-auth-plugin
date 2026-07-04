@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
   "id": "com.khiqwq.owner-auth-plugin",
-  "version": "2.0.1",
-  "name": "主人身份验证插件 (Owner Authentication Plugin)",
-  "description": "为麦麦机器人提供用户身份验证功能，支持多用户独立配置，自定义提示词模板，兼容MaiBot 1.0.0+",
+  "version": "2.1.0",
+  "name": "用户身份验证插件 (Owner Authentication Plugin)",
+  "description": "为麦麦机器人提供用户身份验证功能，按 QQ 号精确识别发言者，支持多用户、限制群聊、回复前注入身份提示词。本 fork 仅自用，建议优先使用已更新新版 SDK 的原插件。",
   "author": {
     "name": "DavidBlackCN",
     "url": "https://github.com/DavidBlackCN"
@@ -21,18 +21,18 @@
     "min_version": "2.5.1",
     "max_version": "2.99.99"
   },
-  "dependencies": [
-    {
-      "type": "python_package",
-      "name": "typing-extensions",
-      "version_spec": ">=4.8.0"
-    }
-  ],
+  "dependencies": [],
   "capabilities": [
-    "send_message"
+    "message.get_by_id",
+    "config.get",
+    "send.text"
   ],
+  "plugin_type": "extension",
   "i18n": {
     "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ],
     "locales_path": "_locales"
   }
 }
