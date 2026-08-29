@@ -8,13 +8,13 @@
 把数字调小并保存后，超出的槽位配置会在插件重载时被清空（关「启用此用户」开关则只是临时停用）。
 
 实现要点：
-- 用官方 Hook：``chat.receive.after_process``（缓存最近真人发言者）、``maisaka.replyer.before_request``
+- 用官方 Hook：``chat.receive.after_process``（按 message_id 缓存真人消息）、``maisaka.replyer.before_request``
   （回复阶段经 extra_prompt 注入）、``maisaka.planner.before_request``（可选，行动规划阶段注入）。
 - 发言者 QQ 在注入时两级定位：``reply_message_id`` 精确取回 → 本插件缓存（收到消息时存下的那条触发消息）；
   刻意不再用"会话最近消息"兜底——那在群聊里会把身份误判成别的发言者。
 - 身份判定只依据平台已验证的 QQ 号；提示词模板支持 {nickname}/{qq}/{display_name}/{msg} 等占位符，
   单遍替换不二次展开，发言者显示名与消息文本均做注入清洗。
-- 会话发言者缓存带 TTL（cache_ttl_seconds），超时清理，避免长期运行内存累积。
+- message_id 身份缓存带 TTL（cache_ttl_seconds）和数量上限，避免长期运行内存累积。
 - 「日志显示等级」可调（INFO/DEBUG/WARNING）；覆写 normalize_plugin_config 兼容旧版配置迁移。
 - 全程无平台相关代码，兼容 Linux 部署的麦麦。
 
@@ -30,6 +30,7 @@ from __future__ import annotations
 import re
 import time
 import tomllib
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -66,8 +67,12 @@ _REPLYER_HOOK = "maisaka.replyer.before_request"
 _PLANNER_HOOK = "maisaka.planner.before_request"
 
 # 入站消息钩子；kwarg 名为 message(序列化的 SessionMessage dict，见 src/chat/message_receive/bot.py)。
-# 用于在收到消息时缓存"该会话最近一位真人发言者"。
+# 用于在收到消息时按 message_id 缓存真人消息身份。
 _RECEIVE_HOOK = "chat.receive.after_process"
+
+# TTL 之外再设硬上限，避免高流量实例在 TTL 窗口内积累无限消息。淘汰只会导致 unresolved，
+# 不会回退到按 session 猜人，符合“宁可不识别，也不能认错”的原则。
+_MESSAGE_CACHE_MAX_ENTRIES = 2048
 
 # 模板字段的多行文本框行数与字段下方小字提示(hint)。
 # 关键：插件配置页(dashboard/plugin-config.tsx)只认 field.ui_type / field.rows / field.hint，
@@ -92,7 +97,7 @@ _LOG_LEVEL_HINT = (
 )
 
 # 「发言者缓存有效期(秒)」字段的下方小字提示。
-_CACHE_TTL_HINT = "会话发言者缓存的保留时长（秒），超时未活动即清理、防内存累积；默认 300 即可。"
+_CACHE_TTL_HINT = "message_id 身份缓存的保留时长（秒），另有数量上限；默认 300 即可。"
 
 # 「限制群聊（群号）」字段的下方小字提示（每个用户分区都有该字段）。
 _GROUP_ID_HINT = (
@@ -116,9 +121,9 @@ class OwnerAuthPlugin(MaiBotPlugin):
 
     async def on_load(self) -> None:
         self._bot_qq_account: str | None = None  # 机器人自身 QQ 缓存（懒加载，用于排除自身消息）
-        # 收到消息时按 session_id 缓存"最近一位真人发言者"（每会话一条，随活跃会话数有界，并按 TTL 清理）。
-        # 存的是精简后的 message dict，便于复用 _extract_identity 统一解析。
-        self._recent_by_session: dict[str, dict[str, Any]] = {}
+        # 只按精确 message_id 缓存真人消息；session_id 仅用于校验，绝不用于查找“最近发言者”。
+        # OrderedDict 的清理、读取、写入都在无 await 的同步片段中完成，不会在事件循环任务间交错。
+        self._message_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # 最近一次注入记录（仅保留全局最新一条 + 累计计数，供状态命令查看；天然有界）。
         self._last_injection: dict[str, Any] | None = None
         self._injection_count: int = 0
@@ -127,15 +132,15 @@ class OwnerAuthPlugin(MaiBotPlugin):
         )
 
     async def on_unload(self) -> None:
-        self._recent_by_session.clear()
+        self._message_cache.clear()
         self._last_injection = None
         self.ctx.logger.info("[用户身份验证] 插件已卸载")
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
         # 配置实时读取，无需缓存；此处仅作日志并顺手清一次过期缓存。scope=="self" 为本插件配置热重载。
         if scope == "self":
-            if hasattr(self, "_recent_by_session"):  # 防御：极早热重载时 on_load 可能尚未初始化字段
-                self._purge_recent_cache()
+            if hasattr(self, "_message_cache"):  # 防御：极早热重载时 on_load 可能尚未初始化字段
+                self._purge_message_cache()
             self.ctx.logger.info("[用户身份验证] 配置已更新")
 
     # ─── 旧版配置迁移 + 数量约束 ─────────────────────────────
@@ -358,7 +363,7 @@ class OwnerAuthPlugin(MaiBotPlugin):
         return max(1, min(_USER_SLOTS, count))
 
     def _cache_ttl(self) -> int:
-        """会话缓存有效期（秒），读 self.config，钳制在 10..3600。"""
+        """message_id 缓存有效期（秒），读 self.config，钳制在 10..3600。"""
 
         raw = getattr(getattr(self.config, "plugin", None), "cache_ttl_seconds", 300)
         try:
@@ -549,52 +554,69 @@ class OwnerAuthPlugin(MaiBotPlugin):
 
     # ─── 缓存清理（TTL）─────────────────────────────────────
 
-    def _purge_recent_cache(self) -> None:
-        """清理超过 TTL 未活动的会话发言者缓存，避免长期运行内存累积。"""
+    def _purge_message_cache(self) -> None:
+        """按 TTL 和数量上限清理 message_id 缓存。"""
 
         ttl = self._cache_ttl()
         now = time.time()
         stale = [
-            sid
-            for sid, cached in self._recent_by_session.items()
+            message_id
+            for message_id, cached in self._message_cache.items()
             if isinstance(cached, dict) and now - float(cached.get("_cached_at") or 0) > ttl
         ]
-        for sid in stale:
-            self._recent_by_session.pop(sid, None)
+        for message_id in stale:
+            self._message_cache.pop(message_id, None)
+        while len(self._message_cache) > _MESSAGE_CACHE_MAX_ENTRIES:
+            self._message_cache.popitem(last=False)
 
     # ─── 消息解析 ───────────────────────────────────────────
 
     async def _resolve_speaker_message(
         self, session_id: str, reply_message_id: str
     ) -> tuple[dict[str, Any] | None, str, str]:
-        """定位"机器人正在回复的发言者"消息，返回 (消息, 来源, 诊断)。两级定位：
+        """定位机器人正在回复的精确消息，返回 (消息, 来源, 诊断)。
 
-        1) 精确：用 reply_message_id 按消息号【全局】查（不按 chat_id 限定，避免 stream/session
-           维度不一致导致查不到）。
-        2) 会话缓存：收到消息时缓存的"本会话最近一位真人发言者"（来自 _RECEIVE_HOOK，不走在线查询，
-           即使该消息号不在可查消息库里也能命中；这是实际最常命中的一档）。
-        两者都拿不到则返回 (None, "none", 诊断)——刻意不再用"会话最近消息(get_recent)"兜底，因为它在
-        群聊里会把身份误判成"最近发的另一个人"；诊断串记录每步结果，便于在日志里定位原因。
+        身份来源只能是 reply_message_id 对应的消息：先查消息 API，再以同一个 ID 查本地缓存。
+        session_id 只用于发现冲突，不参与最近用户推断。无法确认时必须 unresolved。
         """
 
         diag: list[str] = []
-        if reply_message_id:
-            try:
-                res = await self.ctx.message.get_by_id(message_id=reply_message_id)
-                msg = res.get("message") if isinstance(res, dict) else None
-                if isinstance(msg, dict):
-                    return msg, "reply_id", ""
-                diag.append(f"by_id={'未找到' if isinstance(res, dict) else type(res).__name__}")
-            except Exception as exc:  # noqa: BLE001 - 取不到就走下一档，绝不影响回复
-                diag.append(f"by_id异常={exc}")
+        if not reply_message_id:
+            return None, "unresolved", "reply_message_id为空"
 
-        if session_id:
-            cached = self._recent_by_session.get(session_id)
-            if isinstance(cached, dict):
-                return cached, "cache", ""
-            diag.append("cache未命中")
+        try:
+            res = await self.ctx.message.get_by_id(message_id=reply_message_id)
+            msg = res.get("message") if isinstance(res, dict) else None
+            if isinstance(msg, dict):
+                resolved_id = str(msg.get("message_id") or reply_message_id).strip()
+                resolved_session = str(msg.get("session_id") or "").strip()
+                if resolved_id != reply_message_id:
+                    diag.append(f"message_api返回ID不匹配={resolved_id or '空'}")
+                elif session_id and resolved_session and resolved_session != session_id:
+                    diag.append("message_api返回session不匹配")
+                else:
+                    return msg, "message_api", ""
+            else:
+                diag.append(f"message_api={'未找到' if isinstance(res, dict) else type(res).__name__}")
+        except Exception as exc:  # noqa: BLE001 - 取不到就查同一 message_id 的本地缓存
+            diag.append(f"message_api异常={exc}")
 
-        return None, "none", "; ".join(diag)
+        self._purge_message_cache()
+        cached = self._message_cache.get(reply_message_id)
+        if isinstance(cached, dict):
+            if cached.get("_ambiguous"):
+                diag.append("local_cache中message_id跨session冲突")
+            else:
+                cached_session = str(cached.get("session_id") or "").strip()
+                if session_id and cached_session and cached_session != session_id:
+                    diag.append("local_cache中session不匹配")
+                else:
+                    self._message_cache.move_to_end(reply_message_id)
+                    return cached, "local_cache", "; ".join(diag)
+        else:
+            diag.append("local_cache未命中")
+
+        return None, "unresolved", "; ".join(diag)
 
     @classmethod
     def _extract_identity(cls, message: dict[str, Any]) -> tuple[str, str, bool, str]:
@@ -711,12 +733,12 @@ class OwnerAuthPlugin(MaiBotPlugin):
         else:
             emit(message)
 
-    # ─── 缓存钩子：收到消息时记录最近发言者 ──────────────────
+    # ─── 缓存钩子：收到消息时按 message_id 记录发言者 ───────
 
     @HookHandler(
         _RECEIVE_HOOK,
         name="owner_auth_cache_speaker",
-        description="收到消息时缓存该会话最近一位真人发言者，供回复/规划阶段定位身份",
+        description="收到消息时按 message_id 缓存真人发言者，供回复阶段精确定位身份",
         mode=HookMode.BLOCKING,
         order=HookOrder.EARLY,
         error_policy=ErrorPolicy.SKIP,  # 钩子调用失败（含宿主编码消息 OOM）一律跳过，不拖垮入站处理
@@ -736,12 +758,52 @@ class OwnerAuthPlugin(MaiBotPlugin):
             bot_qq = await self._get_bot_qq()
             if bot_qq and speaker_qq == bot_qq:
                 return None  # 机器人自己的消息不作为"发言者"
+            message_id = str(message.get("message_id") or "").strip()
+            if not message_id:
+                return None  # 没有精确消息号就不能成为身份认证来源
             session_id = str(message.get("session_id") or "").strip()
-            if not session_id:
-                return None
-            # 存精简后的 message dict，便于 _resolve_speaker_message → _extract_identity 统一解析；
-            # 额外存 processed_plain_text 供 {msg} 占位符、_cached_at 供 TTL 清理。
-            self._recent_by_session[session_id] = {
+            existing = self._message_cache.get(message_id)
+            if isinstance(existing, dict):
+                if existing.get("_ambiguous"):
+                    existing["_cached_at"] = time.time()
+                    self._message_cache.move_to_end(message_id)
+                    return None
+                existing_session = str(existing.get("session_id") or "").strip()
+                existing_info = existing.get("message_info") or {}
+                existing_user = (existing_info.get("user_info") or {}).get("user_id")
+                existing_group = existing_info.get("group_info")
+                existing_group_id = (
+                    str(existing_group.get("group_id") or "").strip()
+                    if isinstance(existing_group, dict)
+                    else ""
+                )
+                group_info = info.get("group_info")
+                group_id = (
+                    str(group_info.get("group_id") or "").strip()
+                    if isinstance(group_info, dict)
+                    else ""
+                )
+                conflicts = (
+                    (existing_session and session_id and existing_session != session_id)
+                    or (existing_user is not None and str(existing_user) != str(user_info.get("user_id")))
+                    or (existing_group_id and group_id and existing_group_id != group_id)
+                )
+                if conflicts:
+                    # message_id 若对应不同 session/用户/群，无法确认其唯一归属；保留冲突哨兵并拒绝解析。
+                    self._message_cache[message_id] = {
+                        "message_id": message_id,
+                        "_ambiguous": True,
+                        "_cached_at": time.time(),
+                    }
+                    self._message_cache.move_to_end(message_id)
+                    self.ctx.logger.debug(
+                        f"[用户身份验证] message_id 身份或 session 冲突，标记为不可解析："
+                        f"message_id={message_id}, old_session={existing_session}, session={session_id}"
+                    )
+                    self._purge_message_cache()
+                    return None
+            # 存精简消息，明确包含 message_id/session_id/QQ/昵称/群号以及模板需要的文本。
+            self._message_cache[message_id] = {
                 "message_info": {
                     "user_info": {
                         "user_id": user_info.get("user_id"),
@@ -750,7 +812,8 @@ class OwnerAuthPlugin(MaiBotPlugin):
                     },
                     "group_info": info.get("group_info"),
                 },
-                "message_id": message.get("message_id"),
+                "message_id": message_id,
+                "session_id": session_id,
                 "timestamp": message.get("timestamp"),
                 "processed_plain_text": (
                     message.get("processed_plain_text")
@@ -760,7 +823,8 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 ),
                 "_cached_at": time.time(),
             }
-            self._purge_recent_cache()
+            self._message_cache.move_to_end(message_id)
+            self._purge_message_cache()
         except Exception as exc:  # noqa: BLE001 - 缓存失败不影响入站处理
             self.ctx.logger.debug(f"[用户身份验证] 缓存发言者失败（已忽略）: {exc}")
         return None
@@ -794,6 +858,10 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 session_id, reply_message_id
             )
             if not message:
+                self.ctx.logger.debug(
+                    f"[用户身份验证] 身份解析：reply_message_id={reply_message_id or '空'}, "
+                    f"message_id=空, speaker_qq=空, source=unresolved, detail={diag or '无'}"
+                )
                 if log_on:
                     self.ctx.logger.info(
                         f"[用户身份验证] 未能定位发言者，跳过注入"
@@ -803,6 +871,12 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 return None
 
             speaker_qq, display_name, is_private, current_group_id = self._extract_identity(message)
+            resolved_message_id = str(message.get("message_id") or reply_message_id).strip()
+            self.ctx.logger.debug(
+                f"[用户身份验证] 身份解析：reply_message_id={reply_message_id or '空'}, "
+                f"message_id={resolved_message_id or '空'}, "
+                f"speaker_qq={speaker_qq or '空'}, source={source}"
+            )
             if not speaker_qq:
                 if log_on:
                     self.ctx.logger.info(f"[用户身份验证] 定位到消息但无 QQ，跳过（来源={source}）")
@@ -862,13 +936,20 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 return None
 
             session_id = str(kwargs.get("session_id") or "").strip()
-            # planner 钩子无 reply_message_id，只按会话定位"最近发言者"。
-            message, source, diag = await self._resolve_speaker_message(session_id, "")
+            # 当前 planner hook 通常不提供精确触发 message_id。session 最近消息会在并发群聊中串线，
+            # 因此绝不能作为可靠身份认证；仅当宿主明确提供 reply_message_id 时才允许解析。
+            reply_message_id = str(kwargs.get("reply_message_id") or "").strip()
+            message, source, diag = await self._resolve_speaker_message(session_id, reply_message_id)
             if not message:
+                self.ctx.logger.debug(
+                    f"[用户身份验证] planner 身份解析：reply_message_id={reply_message_id or '空'}, "
+                    f"message_id=空, speaker_qq=空, source=unresolved, detail={diag or '无'}"
+                )
                 if bool(getattr(general_cfg, "log_result", True)):
                     self.ctx.logger.info(
                         f"[用户身份验证] planner 未能定位发言者，跳过注入"
-                        f"（session={session_id or '空'}, 详情={diag or '无'}）"
+                        f"（reply_id={reply_message_id or '空'}, session={session_id or '空'}, "
+                        f"详情={diag or '无'}）"
                     )
                 return None
 
@@ -944,7 +1025,7 @@ class OwnerAuthPlugin(MaiBotPlugin):
                 f"- 非用户注入：{bool(getattr(self.config.non_owner, 'enable_non_owner_inject', False))}",
                 f"- 行动规划(planner)注入：{bool(getattr(general, 'enable_planner_inject', False))}",
                 f"- 机器人 QQ 已识别：{'是' if bot_qq else '否'}",
-                f"- 会话缓存数：{len(self._recent_by_session)}",
+                f"- 消息身份缓存数：{len(self._message_cache)}",
                 f"- 累计注入次数：{self._injection_count}",
                 f"- 你的 QQ：{self._mask_qq(user_id)} → "
                 + (f"命中「{getattr(hit, 'nickname', '用户')}」" if hit is not None else "未命中（非用户）"),

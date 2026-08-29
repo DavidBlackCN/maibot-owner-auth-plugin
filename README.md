@@ -80,16 +80,22 @@
 
 插件使用官方 Hook，不再使用 monkey-patch：
 
-- `chat.receive.after_process`：缓存当前会话最近一位真人发言者。
+- `chat.receive.after_process`：按 `message_id` 短期缓存真人消息的身份。
 - `maisaka.replyer.before_request`：回复前定位发言者并注入身份提示词。
 - `maisaka.planner.before_request`：可选，行动规划前注入身份提示词。
 
 发言者定位顺序：
 
 1. 通过 `reply_message_id` 精确获取被回复的消息。
-2. 如果取不到，再使用本插件按 `session_id` 缓存的最近真人发言者。
+2. 如果取不到，再用相同的 `reply_message_id` 查询本插件的本地消息缓存。
+3. 两者都失败时判定为 `unresolved` 并跳过身份注入。
 
-插件刻意不使用“会话最近消息”作为兜底，避免群聊中把身份误判成另一个刚发言的人。
+身份只能来自当前 `reply_message_id` 对应的消息。插件不会按 `session_id` 猜测最近发言者；缓存也带 TTL
+和数量上限。即使查询失败或缓存被淘汰，也只会少注入一次，不会把其他人误识别为主人。
+
+`planner` 注入保持默认关闭。当前 planner hook 通常只有 `session_id`，无法证明是哪一条消息触发了规划；
+这种情况下插件会直接跳过。只有宿主明确提供精确 `reply_message_id` 时才可能注入，因此不要把 planner
+链路当作独立、可靠的主人身份认证机制。
 
 ## 从 2.0.x 升级
 

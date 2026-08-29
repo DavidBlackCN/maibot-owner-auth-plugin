@@ -99,7 +99,7 @@ class GeneralSectionConfig(PluginConfigBase):
     )
     enable_planner_inject: bool = Field(
         default=False,
-        description="实验性：除回复阶段外，是否同时把身份提示词注入到「行动规划(planner)」请求中（默认关；开启前建议先看日志确认命中正常）",
+        description="实验性且默认关闭：仅当 planner hook 提供精确 reply_message_id 时注入；只有 session_id 时会跳过，不能用于可靠身份认证",
         json_schema_extra={"label": "同时注入行动规划(planner)"},
     )
     log_result: bool = Field(
@@ -114,7 +114,7 @@ class GeneralSectionConfig(PluginConfigBase):
     )
     cache_ttl_seconds: int = Field(
         default=300,
-        description="会话发言者缓存的有效期（秒）：超过该时长未活动的会话缓存会被清理，避免长期运行内存累积（10-3600）",
+        description="message_id 身份缓存的有效期（秒）：另有数量上限，超时会清理（10-3600）",
         json_schema_extra={"label": "发言者缓存有效期(秒)", "min": 10, "max": 3600},
     )
     config_version: str = Field(
