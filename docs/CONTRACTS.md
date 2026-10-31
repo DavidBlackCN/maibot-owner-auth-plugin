@@ -12,7 +12,7 @@ get_public_social_context 保留群上下文结构，但不再统计用户之间
 
 ## MaiHush
 
-Hush 继续使用自己配置的管理名单。MaiIdentity 不替它放行静音命令，也不提供绕过发送守卫的回执。
+Hush 选择 identity 来源时，通过 is_admin 查询此处的管理员名单；选择 local 时使用自己的名单。Hush 仍须在正式命令入口核对实际作者，查询失败不授予权限。MaiIdentity 不直接执行静音命令，也不提供绕过发送守卫的回执。
 
 ## 通用接口
 

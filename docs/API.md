@@ -15,7 +15,7 @@ SDK 路由为 `davidblackcn.maibot-maiidentity-plugin.<method>`，使用 `ctx.ap
 
 `is_admin` 必须且只能传入 account_id、bot_account_id、route_scope、stream_id，返回 `{"is_admin": true}` 或 `{"is_admin": false}`。按 Host 实际会话核对机器人账号与 scope，再读取 `management.admin_accounts`；机器人自身、无效参数、未就绪、配置在查询期间变更或查询失败均返回 false。
 
-这只是配置查询，不证明调用方传入的账号就是发令者。执行插件须在自己的正式命令入口核对消息作者。接口不返回完整名单、不创建授权凭据，也不能直接执行管理动作。当前 Hush 使用自己的配置。
+这只是配置查询，不证明调用方传入的账号就是发令者。执行插件须在自己的正式命令入口核对消息作者。接口不返回完整名单、不创建授权凭据，也不能直接执行管理动作。Hush 选择 identity 管理员来源时使用此查询。
 
 ## Vita 管理规则
 

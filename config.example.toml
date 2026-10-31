@@ -22,7 +22,7 @@ enabled = false
 
 [management]
 # 管理员 QQ 字符串数组，最多 16 人；留空无人获权。
-# 当前用于 Vita 管理命令，不控制 Hush；固定身份不会自动成为管理员。
+# 用于 Vita 管理命令；Hush 选择 identity 来源时也使用此名单。固定身份不授予管理权。
 admin_accounts = []
 
 [context]
