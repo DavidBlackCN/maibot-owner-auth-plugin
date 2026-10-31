@@ -17,3 +17,9 @@ Hush 继续使用自己配置的管理名单。MaiIdentity 不替它放行静音
 ## 通用接口
 
 不开放跨插件特权委托、远程角色管理或名单写接口。公开 API 可被访问，不代表调用者已获业务授权；拒绝响应不能被替换成默认允许。
+
+## 配置维护
+
+固定名单以安装实例的 `config.toml` 中 `identity.people` 为唯一来源，通过 WebUI 或文件编辑维护。插件接收 Runner 的配置更新，不自行写配置文件，也不提供消息写入命令。
+
+当前支持的三个 Host 版本中，`component.update_plugin_config` 只允许内置插件管理器调用；在 Manifest 中声明该能力也不能使普通插件获得写入权限。SDK 的 `set_plugin_config()` 仅设置内存配置，不是持久化接口。

@@ -22,7 +22,8 @@ route_scope = ""
 # 显式账号表数组；可选，默认空；条目含 platform=qq、adapter_namespace、account_id 与 enabled。
 accounts = []
 
-# 固定身份名单：填写真实 QQ 和称呼，保存后生效，无需聊天登记。
+# 固定身份名单：通过 WebUI 或本文件编辑，不通过消息命令修改。
+# WebUI 保存后生效；直接编辑文件后重载插件。
 # 每个身份使用一条 [[identity.people]]，最多 200 条；同一 QQ 同一群范围不能重复。
 # 以下示例默认停用，替换账号后启用。
 [[identity.people]]
