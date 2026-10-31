@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
   "id": "davidblackcn.maibot-maiidentity-plugin",
-  "version": "3.2.3",
+  "version": "3.3.0",
   "name": "MaiIdentity",
-  "description": "Account identity and confirmed relations; official Host command entry; self service and Vita command policy.",
+  "description": "固定身份称呼与相处提示，按消息作者匹配名单，并为 MaiVita 提供管理权限查询。",
   "author": {
     "name": "DavidBlackCN",
     "url": "https://github.com/DavidBlackCN"

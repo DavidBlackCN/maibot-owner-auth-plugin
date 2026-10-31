@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+import unicodedata
 from maibot_sdk import PluginConfigBase
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -32,10 +33,44 @@ class AccountEntry(Section):
         return self
 
 
+class PersonEntry(Section):
+    qq: str = Field(description="此人的 QQ 号；只用于匹配消息作者", json_schema_extra={"label": "QQ 号"})
+    nickname: str = Field(min_length=1, max_length=40, description="角色对这个人的固定称呼，如妈妈、朋友", json_schema_extra={"label": "固定称呼"})
+    prompt_template: str = Field(default="", max_length=1000, description="可选的相处说明；留空使用自然表达，可用 {nickname} 引用称呼", json_schema_extra={"label": "相处说明", "x-widget": "textarea"})
+    group_id: str = Field(default="", description="只在指定群生效；留空适用于群聊和私聊", json_schema_extra={"label": "适用群号"})
+    enabled: bool = Field(default=True, description="停用后保留此条配置", json_schema_extra={"label": "启用"})
+
+    @field_validator("qq", "group_id")
+    @classmethod
+    def valid_account(cls, value, info):
+        from ..shared.core import qq
+        if info.field_name == "group_id" and value == "":
+            return value
+        return qq(value)
+
+    @field_validator("nickname")
+    @classmethod
+    def valid_name(cls, value):
+        if value != value.strip() or not value or any(unicodedata.category(c).startswith("C") for c in value):
+            raise ValueError("固定称呼不能为空、含控制字符或首尾空白")
+        return value
+
+
 class IdentitySection(Section):
     adapter_namespace: str = "host-qq"
     route_scope: str = ""
     accounts: list[AccountEntry] = Field(default_factory=list)
+
+    people: list[PersonEntry] = Field(default_factory=list, max_length=200,
+        description="固定身份名单；每人填写 QQ 和称呼即可，同一 QQ 的群专属设置优先", json_schema_extra={"label": "固定身份名单"})
+
+    @field_validator("people")
+    @classmethod
+    def unique_people(cls, value):
+        keys = [(entry.qq, entry.group_id) for entry in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("同一 QQ 在同一适用范围只能配置一次")
+        return value
 
     @field_validator("adapter_namespace")
     @classmethod
@@ -104,7 +139,6 @@ class MaiIdentityConfig(Section):
     compatibility: CompatibilitySection = Field(default_factory=CompatibilitySection)
     integrations: IntegrationsSection = Field(default_factory=IntegrationsSection)
     management: ManagementSection = Field(default_factory=ManagementSection)
-
     @model_validator(mode="after")
     def enabled_review(self):
         if self.plugin.enabled:

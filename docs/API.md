@@ -1,31 +1,35 @@
-# 公共 API major 1
+# MaiIdentity API v1
 
-正式 SDK 路由为 `davidblackcn.maibot-maiidentity-plugin.<method>`，调用使用 `ctx.api.call(route, version="1", **payload)`。该方法已通过真实 Runner 和 Host 调用。`public=True` 仅表示路由可访问。
+SDK 路由为 `davidblackcn.maibot-maiidentity-plugin.<method>`，使用 `ctx.api.call(route, version="1", **payload)`。公开接口不证明调用者或实际消息作者身份。
 
 | 方法 | 当前行为 |
-|---|---|
-| get_contract | 匿名公开：插件、配置、DB、API 版本及实际启用边界，不含账号 |
-| resolve_identity / get_identity | UNTRUSTED_CONTEXT |
-| get_vita_policy | 只读布尔规则查询，不证明调用者身份，不签发执行凭据；字段见下文 |
-| get_public_social_context | 当前群公开关系计数和风格摘要，无账号、主体或私密关系 |
-| authorize_vita_command | 已停用，始终 LOCAL_COMMAND_REQUIRED |
-| authorize | UNTRUSTED_CONTEXT，不签发 proof 或执行许可 |
-| get_confirmed_relations | UNTRUSTED_CONTEXT，不泄露私密关系存在性 |
-| build_context / get_diagnostics | UNTRUSTED_CONTEXT，不接受参数构造 actor |
-| 绑定、委托、关系写方法 | 未注册，descriptor 标明 unsupported |
+| --- | --- |
+| get_contract | 版本、运行状态及功能描述，不含账号或固定身份名单 |
+| get_vita_policy | 查询指定账号在指定会话的 Vita 管理规则，返回布尔结果 |
+| get_public_social_context | 返回中性群上下文，供 Coordinate 使用，不查询或暴露固定身份名单 |
+| authorize_vita_command | 始终拒绝，原因 LOCAL_COMMAND_REQUIRED |
+| resolve_identity、get_identity、authorize、get_confirmed_relations、build_context、get_diagnostics | 拒绝 UNTRUSTED_CONTEXT |
 
-普通响应包含 api_version=1、ok（严格布尔）、data、error、request_id、as_of（UTC 带时区）。尚无可信请求 ID 传输时 request_id=null。错误是稳定 code 和 retryable=false，不回显输入或凭证。调用传入的 is_owner、verified、issuer、caller_plugin_id、user_id、context_ref、proof_ref 都不能认证；真实历史消息也不能证明调用者。
+没有开放名单、绑定、用户关系或委托的写 API。调用参数中的 is_owner、verified、caller_plugin_id、proof_ref 不能获得权限。
 
-本地领域服务提供账号唯一绑定/撤销、双端挑战、RBAC、角色继承、deny、Scope、委托预留/回执/对账和关系确认。它们是受信进程内领域接口，不是网络 API；不得把任意客户端 JSON 转成 Actor 或直接调用 operator 方法。当前没有模型可写 Tool 或远程管理端点；本人登记与公开关系仅通过自己的官方 Command 入口，不能经 API 调用。跨进程原子核验和执行尚未实现。
+## Vita 管理规则
 
-角色、业务 Capability、Scope 与 manifest 的 SDK capability 分别维护。operator_admin 没有 maivita.wake/private.read/configure 等默认权限。关系称谓、动态好感度和模型上下文均不发放能力。可用授予先取并集，再限制到请求/资源/Scope；匹配 deny 优先。缺字段、未知能力和过期均拒绝。
+`get_vita_policy` 必须且只能传入 account_id、bot_account_id、route_scope、stream_id、action。action 支持 wake、enqueue_replan、start_sleep、start_activity、end_activity、apply_plan_patch、manage_goal。
 
-委托需要显式目的、精确能力/资源/范围/参数、时限、次数和预算；首版不转委托。任务只保存 grant_ref；预留时重新读取绑定 epoch、授权/策略 revision，并在同一 SQLite 事务消费次数。预留响应明确 `reservation_only=true, external_execution_authorized=false`，不能当外部执行令牌。未知结果不返还次数、不换新键重发；需可信执行者对账后才可继续。首版不提供外部执行器或调度器。
+Host 路由必须与 bot_account_id、route_scope 一致。配置中的空 scope 对应请求中的 null。返回 `{"policy_version": 1, "allowed": false}`，允许时为 true，失败统一拒绝。
 
-Hook 使用的模型投影 schema_version=1 与 API 响应不同。Replyer 的 subject 来自精确被回复消息；actor 始终不由 subject 推导。Planner 的未知 typed items 不修改；有已核实 extra_prompt 形状时只能给一般来源规则。默认预算 2048 UTF-8 字节，删除非必要字段仍保留来源说明；没有 proof、账号列表、挑战或私密关系。自有块使用实例所有权标记做幂等替换，跨重载仍能替换旧块。内部标记密钥只存自己的 SDK 数据根，此标记不能认证身份、授予权限或被 API 当作 proof。
+Vita 必须从自己的官方 Command 上下文核对真实发令者；查询结果不是可转交的执行令牌。固定身份配置不参与该查询。
 
-## 有限管理策略与公开社交查询
+## Coordinate 群上下文
 
-`get_vita_policy@1` 必须且只能传入 account_id、bot_account_id、route_scope、stream_id、action。action 为 wake、enqueue_replan、start_sleep、start_activity、end_activity、apply_plan_patch 或 manage_goal。Host 路由必须与 bot_account_id/route_scope 相符；空配置 scope 对应请求中的 null，而不是空字符串。返回独立结构 `{"policy_version": 1, "allowed": false}`（允许时为 true），失败统一拒绝。它不使用通用 envelope，不证明实际作者，Vita 必须从自己的官方 Command 上下文核对作者。
+`get_public_social_context` 必须且只能传入 stream_id、bot_account_id、route_scope，并通过相同路由核对。
 
-`get_public_social_context@1` 必须且只能传入 stream_id、bot_account_id、route_scope，并通过相同路由核对。响应采用通用 envelope；不可用时 error 为 CONTEXT_UNAVAILABLE。data 包含 stream_id、counts（friend/family/partner，各不超过 20）、relation_state、completeness、style、rule、revision。仅计入当前群公开有效关系；争议时计数归零并给出 neutral 风格。不返回账号、主体 ID 或私密关系。
+返回 envelope：api_version、ok、data、error、request_id、as_of。data 包含 stream_id、counts、relation_state、completeness、style、rule、revision。当前 counts 的 friend／family／partner 均为 0，relation_state 为 none_confirmed，style 为 neutral。它不代表现实中无人相识，也不能用来推断固定名单关系。
+
+不可用时返回 CONTEXT_UNAVAILABLE。结果不含账号、称呼、个人提示词或旧用户关系记录。
+
+## 聊天上下文
+
+Replyer 根据准确的被回复消息作者匹配固定配置；群专属条目优先，昵称不作为匹配依据。上下文使用自然语言，区分已配置、当前会话未配置、对象未知。个人说明可被长度预算截短，身份与来源规则保留。
+
+Planner 没有准确回复对象时仅提供通用来源规则。只处理已支持的 Hook 参数和 schema 1 items，不改写 Host 消息历史。每次替换本实例签名验证成功的旧提示，保留其他插件内容。标记签名仅用于识别自身文本，不是授权凭据。

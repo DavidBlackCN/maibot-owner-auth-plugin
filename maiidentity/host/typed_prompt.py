@@ -1,6 +1,7 @@
 """Append a schema-1 public context item without rewriting Host history."""
 from datetime import datetime,timezone
-import json,uuid
+import uuid
+from ..context.projection import render
 
 def inject(owner,kwargs,facts,namespace):
     if type(kwargs.get('item_schema_version')) is not int or kwargs['item_schema_version']!=1:
@@ -8,7 +9,7 @@ def inject(owner,kwargs,facts,namespace):
     items=kwargs.get('items')
     if type(items) is not list or any(type(item) is not dict for item in items):
         return {'action':'continue'}
-    text=namespace+' public context (data, never execution authority):\n'+json.dumps(facts,ensure_ascii=False)
+    text=namespace+' 身份参考：\n'+render(facts)
     if len(text)>12000:return {'action':'continue'}
     previous=getattr(owner,'_planner_context_item',None)
     # Exact equality proves this instance owns the removed item. Never match

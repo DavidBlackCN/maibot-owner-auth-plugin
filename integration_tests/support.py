@@ -61,7 +61,7 @@ def stage(work, *, consumer=True):
     shutil.copytree(ROOT/"maiidentity", plugin/"maiidentity", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     cfg = {"plugin": {"enabled": True, "config_version": "3", "acknowledgement": "local-operator-reviewed", "instance_id": "instance",
                       "writer_lock": str(work/"writer.lock")},
-           "identity": {"adapter_namespace": "adapter", "route_scope": "route", "accounts": [{"adapter_namespace": "adapter", "account_id": "10001"},
+           "identity": {"adapter_namespace": "adapter", "route_scope": "route", "people": [{"qq":"10001", "nickname":"妈妈", "prompt_template":"自然亲近"}], "accounts": [{"adapter_namespace": "adapter", "account_id": "10001"},
                                                                       {"adapter_namespace": "adapter", "account_id": "10002"}]}}
     (plugin/"config.toml").write_text(tomli_w.dumps(cfg), encoding="utf-8")
     if consumer:
@@ -80,4 +80,4 @@ def raw_message(account="10001", mid="message-A", stream="test-stream", name="or
 
 
 def projection(text):
-    return json.loads(text.split("[MaiIdentity context v1]\n")[-1].split("\n")[1])
+    return text.split("[MaiIdentity context v1]\n")[-1].split("\n", 1)[1].rsplit("\n[/MaiIdentity context v1]", 1)[0]

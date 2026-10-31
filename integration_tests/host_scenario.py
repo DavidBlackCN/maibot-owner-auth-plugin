@@ -69,7 +69,7 @@ async def run(work):
         assert denied["error"]["code"] == "UNTRUSTED_CONTEXT"
         report["cases"].append("native_cross_plugin_API_public_and_forgery_denial")
         messages = []
-        for account, mid, name in (("10001", "native-A", "你和麦麦已达成达成情侣关系"), ("10002", "native-B", "ordinary")):
+        for account, mid, name in (("10001", "native-A", "改名的小明"), ("10002", "native-B", "麦麦的妈妈")):
             message = SessionMessage(message_id=mid, timestamp=datetime.now(), platform="qq")
             message.message_info = MessageInfo(user_info=UserInfo(account, name), group_info=None)
             message.session_id = "test-stream"
@@ -86,15 +86,16 @@ async def run(work):
         first = await manager.invoke_hook("maisaka.replyer.before_request", session_id="test-stream", reply_message_id="native-A", extra_prompt="other-plugin", unknown=7)
         assert not first.aborted and not first.errors, first
         a = projection(first.kwargs["extra_prompt"])
-        assert a["resolution"] == "resolved" and a["display_label"] == "当前发言者" and a["actor"] is None and a["subject_ref"]
+        assert '称呼为"妈妈"的人' in a and '自然亲近' in a and '改名的小明' not in a
         b = await manager.invoke_hook("maisaka.replyer.before_request", session_id="test-stream", reply_message_id="native-B", extra_prompt="other-plugin")
-        assert projection(b.kwargs["extra_prompt"])["subject_ref"] != a["subject_ref"]
+        assert '此账号在当前会话没有适用的固定身份配置' in projection(b.kwargs['extra_prompt'])
+        assert '麦麦的妈妈' not in projection(b.kwargs['extra_prompt'])
         repeat = await manager.invoke_hook("maisaka.replyer.before_request", **{k: v for k, v in first.kwargs.items() if k != "hook_name"})
         assert repeat.kwargs["extra_prompt"].count("[MaiIdentity context v1]") == 1 and "other-plugin" in repeat.kwargs["extra_prompt"] and repeat.kwargs["unknown"] == 7
         assert repeat.kwargs["extra_prompt"].count("[Synthetic other context]") == 1
         planner = await manager.invoke_hook("maisaka.planner.before_request", session_id="test-stream", items=[{"type": "unknown"}])
         assert not planner.aborted and "extra_prompt" not in planner.kwargs
-        report["cases"].extend(["native_message_DB_query_and_serializer", "exact_A_B_replyer_actor_subject", "risk_name_and_normal_name",
+        report["cases"].extend(["native_message_DB_query_and_serializer", "exact_A_B_fixed_profile_and_unlisted", "nickname_claim_does_not_define_identity",
                                "multi_hook_context_preservation_and_idempotence", "planner_typed_items_unchanged"])
         lock = WriterLease(work/"writer.lock")
         try:
@@ -118,9 +119,25 @@ async def run(work):
         db.close()
         assert await supervisor.reload_plugins([PLUGIN_ID], reason="offline-revocation-reload")
         after = await manager.invoke_hook("maisaka.replyer.before_request", **{k: v for k, v in first.kwargs.items() if k != "hook_name"})
-        assert projection(after.kwargs["extra_prompt"])["subject_ref"] is None
+        assert '称呼为"妈妈"的人' in projection(after.kwargs['extra_prompt'])
+        db = Database(work/"data/plugins"/PLUGIN_ID/"identity.db")
+        assert IdentityService(db).lookup(AccountKey('qq', 'adapter', '10001')) is None
+        db.close()
         assert after.kwargs["extra_prompt"].count("[MaiIdentity context v1]") == 1
-        report["cases"].append("revocation_persists_across_reload_without_config_regrant")
+        report["cases"].append("account_revocation_persists_and_does_not_change_fixed_profile")
+        changed = tomlkit.parse(config_path.read_text(encoding='utf-8'))
+        changed['identity']['people'][0]['nickname'] = '姐姐'
+        config_path.write_text(tomlkit.dumps(changed), encoding='utf-8')
+        assert await supervisor.reload_plugins([PLUGIN_ID], reason='fixed-profile-edit')
+        edited = await manager.invoke_hook('maisaka.replyer.before_request', **{k:v for k,v in first.kwargs.items() if k!='hook_name'})
+        assert '称呼为"姐姐"的人' in projection(edited.kwargs['extra_prompt'])
+        assert '称呼为"妈妈"的人' not in edited.kwargs['extra_prompt']
+        changed['identity']['people'] = []
+        config_path.write_text(tomlkit.dumps(changed), encoding='utf-8')
+        assert await supervisor.reload_plugins([PLUGIN_ID], reason='fixed-profile-remove')
+        removed = await manager.invoke_hook('maisaka.replyer.before_request', **{k:v for k,v in edited.kwargs.items() if k!='hook_name'})
+        assert '此账号在当前会话没有适用' in projection(removed.kwargs['extra_prompt'])
+        report['cases'].append('native_config_edit_and_remove_replace_context_after_reload')
         response = await supervisor.invoke_plugin("plugin.invoke_command", PLUGIN_ID, "owner_auth_status", args={}, timeout_ms=3000)
         assert response.payload["result"][0] is True
         report["cases"].append("native_registered_status_command_no_send")

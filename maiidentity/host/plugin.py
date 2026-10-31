@@ -9,8 +9,8 @@ import uuid
 from maibot_sdk import API, Command, HookHandler, MaiBotPlugin
 from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
 
-from .. import OLD_PLUGIN_ID
-from ..context.projection import Projector, snapshot
+from .. import OLD_PLUGIN_ID, PLUGIN_VERSION
+from ..context.projection import Projector, snapshot, match_person
 from ..identity.messages import MessageResolver, host_message
 from ..identity.service import BindingChallenges, IdentityService
 from ..integrations.api import PublicAPI, descriptor
@@ -236,6 +236,11 @@ class MaiIdentityPlugin(MaiBotPlugin):
             await self.on_unload()
             raise
         if self.active is not None and new != self.loaded_config:
+            if new.model_dump(exclude={'identity': {'people'}}) == self.loaded_config.model_dump(exclude={'identity': {'people'}}):
+                # Replace the reading view atomically. In-flight lookups discard old views.
+                self.active = self.active.model_copy(update={'identity': new.identity.model_copy(deep=True)})
+                self.loaded_config = new.model_copy(deep=True)
+                return
             await self.on_unload()
             raise RuntimeError("RELOAD_REQUIRED")
 
@@ -258,23 +263,26 @@ class MaiIdentityPlugin(MaiBotPlugin):
         return None
 
     async def _inject(self, kwargs, stage):
-        if not self.ready or not self.active.context.enabled:
+        active = self.active
+        resolver = self.resolver
+        if not self.ready or active is None or not active.context.enabled:
             return None
         try:
-            evidence = binding = visible = None
+            evidence = None
             if stage == "replyer" and kwargs.get("reply_message_id") and kwargs.get("session_id"):
                 async def query(message_id, stream):
                     return await self.ctx.message.get_by_id(message_id, stream_id=stream)
-                evidence, _ = await self.resolver.resolve(instance=self.active.plugin.instance_id, platform="qq",
-                    namespace=self.active.identity.adapter_namespace, stream=kwargs["session_id"],
+                evidence, _ = await resolver.resolve(instance=active.plugin.instance_id, platform="qq",
+                    namespace=active.identity.adapter_namespace, stream=kwargs["session_id"],
                     message_id=kwargs["reply_message_id"], query=query, parse=self._parse)
-                if evidence:
-                    binding = await asyncio.to_thread(self.identity.lookup, evidence.account)
-                    if binding:
-                        scope = Scope("stream", self.active.plugin.instance_id, "default", "qq",
-                                      self.active.identity.adapter_namespace, "context", "default", evidence.stream_id)
-                        visible = await asyncio.to_thread(self.relations.visible, binding["subject"], scope)
-            facts=snapshot(evidence,binding,visible,stage=stage)
+            if not self.ready or self.active is not active:
+                # A prior turn may already contain our old identity block.
+                # Replace it with unknown context rather than leaving a stale profile.
+                if self.ready and self.projector is not None:
+                    return self.projector.inject(kwargs, snapshot(stage=stage))
+                return None
+            person = match_person(active.identity.people, evidence)
+            facts = snapshot(evidence, person, stage=stage)
             if stage=='planner' and 'extra_prompt' not in kwargs:
                 from .typed_prompt import inject
                 result=inject(self,kwargs,facts,'MaiIdentity')
@@ -361,28 +369,27 @@ class MaiIdentityPlugin(MaiBotPlugin):
     async def status(self, stream_id="", **kwargs):
         if not stream_id:
             return True, "MaiIdentity status: no target stream", 1
-        text = "MaiIdentity 3.2.3；"+("已就绪" if self.ready else "未启用")+"；官方命令入口可用，无需 Host 补丁；关系不是执行许可。"
+        count = sum(p.enabled for p in self.active.identity.people) if self.ready and self.active else 0
+        text = f"MaiIdentity {PLUGIN_VERSION}；"+("已就绪" if self.ready else "未启用")+f"；启用的固定身份 {count} 条；称呼不授予管理权限。"
         try:
             sent = await self.ctx.send.text(text, stream_id)
             return True, "public status sent" if sent is True else "normal send denied", 1
         except Exception:
             return True, "normal send unavailable", 1
 
-    @Command('maiidentity_manage',pattern=r'^/maiidentity(?:\s|$)',description='身份状态、本人登记及双方关系确认')
+    @Command('maiidentity_manage',pattern=r'^/maiidentity(?:\s|$)',description='固定身份帮助与运行状态')
     async def self_command(self,text='',stream_id='',**kwargs):
         if text.strip() in ('/maiidentity','/maiidentity status'):
             return await self.status(stream_id=stream_id)
         if text.strip() in ('/maiidentity help','/maiidentity 帮助'):
             if not stream_id:return True,'no target stream',2
-            help_text=('MaiIdentity：\n/maiidentity 登记我\n/maiidentity 查看关系\n'
-                '/maiidentity 建立关系 对方QQ 朋友（也支持家人、伴侣）\n'
-                '/maiidentity 确认关系 关系ID（由对方确认）\n/maiidentity 撤销关系 关系ID\n'
-                '仅当前群公开关系；不授予任何管理权。Vita 管理账号由本地 vita_admin_accounts 配置。')
+            help_text=('MaiIdentity：\n/maiidentity status 查看状态\n'
+                '在配置的 identity.people 名单填写 QQ、nickname 和可选 prompt_template，无需登记。\n'
+                'Vita 管理账号由 management.vita_admin_accounts 配置，固定称呼不授予管理权。')
             try:await self.ctx.send.text(help_text,stream_id)
             except Exception:pass
             return True,'help through normal permissions',2
         from .local_command import validate
-        from .self_service import apply
         from ..shared.core import Denied
         from .routes import command_route
         target=''
@@ -396,14 +403,12 @@ class MaiIdentityPlugin(MaiBotPlugin):
             # A verified destination permits a generic receipt, not a mutation.
             target=route['stream_id']
             require(self.ready and self.active is active,'NOT_READY')
-            command=validate(self,envelope)
-            message=await owned_io(apply,self,command)
+            validate(self,envelope)
+            message='MaiIdentity：此命令不可用。固定身份请在配置的 identity.people 名单中设置；使用 /maiidentity help 查看帮助。'
         except Denied as exc:
             message='MaiIdentity 未执行：'+exc.code
             hints={'UNTRUSTED_CONTEXT':'命令消息身份字段不一致，请检查适配器消息。',
                 'IDENTITY_UNRESOLVED':'无法确认当前消息作者，未执行操作。',
-                'INVALID_ACCOUNT_ID':'请填写对方的数字 QQ 号，不要原样填写 BQQ。',
-                'INVALID_ID':'请填写实际返回的关系 ID，不要原样填写 REL。',
                 'NOT_READY':'插件正在重载或尚未就绪，请稍后重试。'}
             if exc.code in hints:message+='；'+hints[exc.code]
             if not target: return True,message,2

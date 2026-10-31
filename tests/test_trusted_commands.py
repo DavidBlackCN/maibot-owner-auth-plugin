@@ -13,7 +13,8 @@ async def test_official_entry_without_extension_and_no_api_write(tmp_path):
     try:
         c=command('10001','/maiidentity register')
         result=await p.self_command(**c)
-        assert p.identity.lookup(AccountKey('qq','host-qq','10001'))
+        assert p.identity.lookup(AccountKey('qq','host-qq','10001')) is None
+        assert '此命令不可用' in result[1]
         assert 'security.resolve_command' not in calls
         assert not p.db.records('grant') and not p.db.records('role')
         before=p.db.conn.total_changes

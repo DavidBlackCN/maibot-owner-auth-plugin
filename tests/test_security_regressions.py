@@ -33,16 +33,16 @@ def test_R04_R05_R06_R08_R09_R10_R15_current_relations_and_projection(domain):
     row = relations.propose(a, subjects[1], "partner", scope(), visibility="public", domain="user_declared", key="partner")
     row = relations.confirm(row["id"], b, expected=1, evidence_ref="trusted-bilateral", key="confirm")
     visible = relations.visible(subjects[0], scope())
-    data = snapshot(evidence(), identity.lookup(accounts[0]), visible)
-    assert data["relations"][0]["type"] == "partner" and data["relation_state"] == "confirmed"
+    data = snapshot(evidence())
+    assert visible['relations'] and data['state'] == 'unlisted'
     # Copying a display name, claims, high closeness and memory summary does not
     # copy the binding or a confirmed relation onto another account.
-    other = snapshot(evidence(account="10003"), identity.lookup(accounts[2]), relations.visible(subjects[2], scope()))
-    assert other["relation_state"] == "none_confirmed" and not other["relations"]
+    other = snapshot(evidence(account="10003"))
+    assert other['state'] == 'unlisted'
     assert not policy.authorize(a, "maivita.wake", scope(), request_id="r", external_policy=True)["allowed"]
     relations.revoke(row["id"], a, expected=2, key="revocation")
     assert relations.visible(subjects[0], scope())["relation_state"] == "none_confirmed"
-    assert data["relations"]  # old model snapshot cannot write authoritative state.
+    assert data['state'] == 'unlisted'  # User relationships never enter fixed identity context.
     assert not relations.db.records("social_score")
 
 

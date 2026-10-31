@@ -11,6 +11,10 @@ def test_host_webui_schema_builds_required_row_drafts_without_runtime_defaults()
     accounts = schema['sections']['identity']['fields']['accounts']
     assert accounts['default'] == [] and accounts['item_fields']['account_id']['default'] == ''
     assert schema['sections']['roles']['fields']['entries']['hidden']
+    people = schema['sections']['identity']['fields']['people']
+    assert people['default'] == [] and people['item_fields']['qq']['default'] == ''
+    assert people['item_fields']['nickname']['default'] == ''
+    assert people['item_fields']['prompt_template']['default'] == ''
     config = {name: {k: v['default'] for k, v in s['fields'].items()} for name, s in schema['sections'].items()}
     assert MaiIdentityConfig.model_validate(json.loads(json.dumps(config))) == MaiIdentityConfig()
     for section in schema['sections'].values():
@@ -22,6 +26,7 @@ def test_host_webui_schema_builds_required_row_drafts_without_runtime_defaults()
 
 @pytest.mark.parametrize('patch', [
     {'identity': {'accounts': [{}]}}, {'roles': {'entries': [{}]}},
+    {'identity': {'people': [{}]}},
     {'integrations': {'cross_plugin_privileged_enabled': True}},
 ])
 def test_editor_drafts_are_not_valid_accounts_or_roles(patch):

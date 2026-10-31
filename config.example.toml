@@ -22,6 +22,18 @@ route_scope = ""
 # 显式账号表数组；可选，默认空；条目含 platform=qq、adapter_namespace、account_id 与 enabled。
 accounts = []
 
+# 固定身份名单：填写真实 QQ 和称呼，保存后生效，无需聊天登记。
+# 每个身份使用一条 [[identity.people]]，最多 200 条；同一 QQ 同一群范围不能重复。
+# 以下示例默认停用，替换账号后启用。
+[[identity.people]]
+qq = "123456789"
+nickname = "妈妈"
+# 可留空；支持 {nickname}，不包含聊天正文或账号占位符。
+prompt_template = "与{nickname}自然亲近，可以撒娇，关心点到为止。"
+# 留空在群聊和私聊生效；填写群号只在该群生效。同 QQ 群专属条目优先。
+group_id = ""
+enabled = false
+
 # Vita 有限生活管理权限；与 Hush 管理员独立。
 [management]
 # Vita 管理员 QQ 字符串数组，最多 16 个且不重复（5–20 位非零开头数字）；可选，默认空表示无人有权。

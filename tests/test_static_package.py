@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_versions_minimal_capabilities_single_entry_license_and_domain_boundaries():
     manifest = json.loads((ROOT/"_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["id"] == PLUGIN_ID and manifest["version"] == PLUGIN_VERSION == "3.2.3"
+    assert manifest["id"] == PLUGIN_ID and manifest["version"] == PLUGIN_VERSION == "3.3.0"
     assert (CONFIG_VERSION, DB_SCHEMA, API_MAJOR) == ("3", 1, "1")
     assert set(manifest["capabilities"]) == {"message.get_by_id", "chat.get_all_streams", "component.list_loaded_plugins", "send.text"}
     # Git and Windows checkouts may use different line endings for the same license.

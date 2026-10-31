@@ -1,31 +1,19 @@
-# MaiVita 契约桥 1.0.0
+# 插件协作边界
 
-历史契约形状参考 MaiVita `7ec8fa99b6a2745844913465142e86764167e427`（插件 0.3.1，契约 1.0.0）。本插件未修改 MaiVita 仓库，未实现它的生活引擎。
+支持 Host／SDK 精确配对：1.3.12／2.15.0、1.3.15／2.16.0、1.3.18／2.19.0。运行版本由 get_contract 报告。
 
-| 类型 | 严格字段 |
-|---|---|
-| IdentityRequest | contract_version、request_id、context_ref、action、character_id、stream_id |
-| IdentityDecision | contract_version、request_id、verified、subject_ref、issuer、stream_id、issued_at、expires_at、proof_ref |
-| PolicyRequest | IdentityRequest 加 identity_proof_ref、state_version、config_revision |
-| PolicyDecision | contract_version、request_id、allowed、reason_code、state_version、config_revision、expires_at |
+## MaiVita
 
-contract_version 固定 "1.0.0"；character_id 固定 default。action 为 read_private/wake/interrupt_sleep/replan/configure。未知字段、字符串布尔值、无时区时间和超过 30 秒的身份生命周期都拒绝。verified=true 还必须有主体/proof 引用；类型校验本身不认证发行方。
+Vita 从自己的官方 Command 入口核对消息作者，再调用 get_vita_policy 查询管理规则。固定身份称呼、模型输出、昵称和其他客户端传入的身份声明都不能代替这个过程。具体参数见 [API](API.md)。
 
-独立桥接层将 v1 请求转为严格否定响应：身份 verified=false，策略 allowed=false/POLICY_UNAVAILABLE。当前没有绑定真实传输，不能通过修改 payload 变成允许，也没有把通用 envelope 塞入严格模型。
+## MaiCoordinate
 
-H03：固定 Host 的 api.call 确认了调用方 SDK capability，但仅把 api_args 转给目标处理器，没有可信终端 actor/caller/context_ref 发行与验证服务。H03 disabled。Owner 身份通过不能覆盖统一策略拒绝；私密读取、唤醒、打断、重规划和配置权都未联通。
+get_public_social_context 保留群上下文结构，但不再统计用户之间的关系。返回中性结果，不披露固定身份名单，也不根据称呼推断亲密程度。Coordinate 不应将此结果当成账号认证或发送许可。
 
-H01：可信发送回执的用途、attempt、stream 和一次性消费独立验收，当前 unsupported。H02：插件归属化调频/撤销也独立验收，当前 unsupported。MaiIdentity 不声明或调用 frequency.set_adjust，不发送管理例外消息。
+## MaiHush
 
-后续联合验收必须验证发行方/caller、真实上下文、请求/动作/资源/流绑定、epoch/revision、过期/撤销/重放、跨进程原子消费，以及身份允许但策略拒绝。JSON Schema、单元端口、原生拒绝路径与生态互通是不同证据层级。
+Hush 继续使用自己配置的管理名单。MaiIdentity 不替它放行静音命令，也不提供绕过发送守卫的回执。
 
-## 与 Hush 的权限边界
+## 通用接口
 
-固定支持 Host 1.3.12 / SDK 2.15.0，manifest 与加载检查一致。新增能力目录 maihush.mute / maihush.renew / maihush.unmute / maihush.configure，均不可委托，均无内置角色自动授予。执行目标必须是 QQ 的 stream scope、group resource，仍要求独立 external_policy=True。静态目录由本地代码控制，未开放任意插件注册或重定义命名空间的接口。
-
-上述目录只供后续受审计的 H03 适配；当前受保护 API 继续 UNTRUSTED_CONTEXT。Hush 本地命令的授权源未迁移，不采用“本地 owner 或 Identity allow”的双重放行。身份资格、业务规则与实际执行各自独立；关系和预约结果不能冒充远端执行授权。
-
-当前 get_contract 的 host/sdk 字段报告实际运行版本；支持 1.3.12/2.15.0 和 1.3.15/2.16.0 配对。此兼容性修订没有开放 H03、委托传输或跨插件写权限。
-
-
-默认会话范围：Vita 的空 allowed_streams 表示所有 Host 接入会话，非空仍精确限制；Identity 的空 route_scope 仅匹配消息 scope=None。自动实例标识、自动锁和默认启用均不建立可信调用者身份，不开放 H01/H02/H03 或跨插件特权。
+不开放跨插件特权委托、远程角色管理或名单写接口。公开 API 可被访问，不代表调用者已获业务授权；拒绝响应不能被替换成默认允许。

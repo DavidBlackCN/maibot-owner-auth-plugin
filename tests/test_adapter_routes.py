@@ -24,7 +24,8 @@ async def test_empty_fallback_registration_denials_receipts_and_route_isolation(
     monkeypatch.setattr(ctx.send,'text',send)
     try:
         await p.self_command(**command('10001','/maiidentity register'))
-        assert p.identity.lookup(AccountKey('qq','host-qq','10001'))
+        assert p.identity.lookup(AccountKey('qq','host-qq','10001')) is None
+        assert '此命令不可用' in send.call_args.args[0]
         assert send.await_count==1 and send.call_args.args[1]=='s1'
         assert 'config.get' not in calls
         for update in ({'user_id':'10002'},{'platform':'webui'}):
@@ -47,15 +48,16 @@ async def test_empty_fallback_registration_denials_receipts_and_route_isolation(
 
 
 @pytest.mark.asyncio
-async def test_storage_failure_and_reload_have_visible_safe_receipts(tmp_path,monkeypatch):
+async def test_validation_failure_and_reload_have_visible_safe_receipts(tmp_path,monkeypatch):
     p=MaiIdentityPlugin();ctx,_=context(tmp_path);p._set_context(ctx);p.set_plugin_config({});await p.on_load()
     send=AsyncMock(return_value=True);monkeypatch.setattr(ctx.send,'text',send)
     try:
-        from maiidentity.host import self_service
+        from maiidentity.host import local_command
         def fail(*a):raise OSError('secret database path')
-        monkeypatch.setattr(self_service,'apply',fail)
-        await p.self_command(**command('10001','/maiidentity register'))
-        assert '操作未确认' in send.call_args.args[0] and 'secret' not in send.call_args.args[0]
+        with monkeypatch.context() as patch:
+            patch.setattr(local_command,'validate',fail)
+            await p.self_command(**command('10001','/maiidentity register'))
+            assert '操作未确认' in send.call_args.args[0] and 'secret' not in send.call_args.args[0]
         async def reload(**kw):
             p.active=p.active.model_copy(deep=True)
             return [route()]

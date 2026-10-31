@@ -146,13 +146,13 @@ async def test_sdk_lifecycle_actor_subject_multi_hook_and_cleanup(tmp_path):
     await plugin.receive(message=raw)
     hook = await plugin.replyer(session_id="s", reply_message_id="exact-message", extra_prompt="other", user_id="10002")
     data = block_data(hook)
-    assert data["resolution"] == "resolved" and data["actor"] is None and data["subject_ref"]
-    assert data["display_label"] == "当前发言者"
+    assert "此账号在当前会话没有适用的固定身份配置" in data
+    assert raw['message_info']['user_info']['user_nickname'] not in data
     second = await plugin.replyer(**hook["modified_kwargs"])
     assert second["modified_kwargs"]["extra_prompt"].count("[MaiIdentity context v1]") == 1
     assert await plugin.planner(session_id="s", items=[{"unknown": 1}]) is None
     general = await plugin.planner(session_id="s", extra_prompt="other")
-    assert block_data(general)["resolution"] == "unresolved"
+    assert "本轮没有准确确定" in block_data(general)
     assert (await plugin.authorize(is_owner=True))["error"]["code"] == "UNTRUSTED_CONTEXT"
     old_resolver = plugin.resolver
     await plugin.on_unload()
