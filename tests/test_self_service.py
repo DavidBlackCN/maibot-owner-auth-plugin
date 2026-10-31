@@ -2,7 +2,7 @@
 import uuid
 import pytest
 from maiidentity.host.plugin import MaiIdentityPlugin
-from .test_migration_lifecycle import context
+from .test_lifecycle import context
 
 
 def command(user, text, stream='s1', scope=None):
@@ -25,6 +25,6 @@ async def test_removed_commands_have_no_writes(tmp_path):
             result = await p.self_command(**command('10001', '/maiidentity ' + text))
             assert '此命令不可用' in result[1]
         assert p.db.conn.total_changes == before
-        assert p.db.conn.execute('SELECT count(*) FROM bindings').fetchone()[0] == 0
+        assert [r[0] for r in p.db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")] == ['metadata']
     finally:
         await p.on_unload()

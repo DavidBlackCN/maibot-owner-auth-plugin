@@ -1,3 +1,0 @@
-maibot-plugin-sdk==2.15.0
-pydantic==2.14.1
-tomli_w==1.2.0

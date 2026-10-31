@@ -4,7 +4,7 @@
 
 ## MaiVita
 
-Vita 从自己的官方 Command 入口核对消息作者，再调用 get_vita_policy 查询管理规则。固定身份称呼、模型输出、昵称和其他客户端传入的身份声明都不能代替这个过程。具体参数见 [API](API.md)。
+Vita 从自己的官方 Command 入口核对消息作者，再调用 get_vita_policy 查询管理规则。管理员来源为 `management.admin_accounts`。固定身份称呼、模型输出、昵称和其他客户端传入的身份声明都不能代替这个过程。具体参数见 [API](API.md)。
 
 ## MaiCoordinate
 

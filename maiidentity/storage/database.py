@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-import json
 import os
 import sqlite3
 import threading
+import secrets
+import uuid
 
-from ..shared.core import Clock, Denied, canonical, digest, require
+from ..shared.core import Denied, opaque, require
 
 
 class WriterLease:
@@ -42,22 +43,12 @@ class WriterLease:
             self.handle = None
 
 
-SCHEMA = """
-CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE subjects(id TEXT PRIMARY KEY, status TEXT NOT NULL, revision INTEGER NOT NULL);
-CREATE TABLE bindings(account TEXT PRIMARY KEY, subject TEXT NOT NULL REFERENCES subjects(id),
- status TEXT NOT NULL, epoch INTEGER NOT NULL, method TEXT NOT NULL);
-CREATE TABLE records(kind TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
- data TEXT NOT NULL, PRIMARY KEY(kind,id));
-CREATE TABLE idempotency(key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL);
-CREATE TABLE audit(seq INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL,
- target_ref TEXT NOT NULL, summary TEXT NOT NULL);
-"""
+SCHEMA = "CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
 
 
 class Database:
-    def __init__(self, path: Path, *, create: bool = False, clock=None):
-        self.path, self.clock = Path(path), clock or Clock()
+    def __init__(self, path: Path, *, create: bool = False):
+        self.path = Path(path)
         self.guard = threading.RLock()
         self.conn = None
         exists = self.path.exists()
@@ -70,7 +61,6 @@ class Database:
             self.conn.execute("PRAGMA foreign_keys=ON")
             if create:
                 self.conn.executescript("BEGIN IMMEDIATE;" + SCHEMA + "PRAGMA user_version=1; COMMIT;")
-                self.conn.execute("INSERT INTO metadata VALUES('policy_revision','1')")
             require(self.conn.execute("PRAGMA user_version").fetchone()[0] == 1, "UNKNOWN_SCHEMA")
             require(self.conn.execute("PRAGMA quick_check").fetchone()[0] == "ok", "STORAGE_UNAVAILABLE")
             self.conn.execute("SELECT key,value FROM metadata").fetchall()
@@ -90,49 +80,20 @@ class Database:
                 self.conn.execute("ROLLBACK")
                 raise
 
-    def get(self, kind: str, ref: str):
-        with self.guard:
-            require(self.conn is not None, "STORAGE_UNAVAILABLE")
-            row = self.conn.execute("SELECT data FROM records WHERE kind=? AND id=?", (kind, ref)).fetchone()
-            return json.loads(row[0]) if row else None
-
-    def records(self, kind: str):
-        with self.guard:
-            require(self.conn is not None, "STORAGE_UNAVAILABLE")
-            return [json.loads(r[0]) for r in self.conn.execute("SELECT data FROM records WHERE kind=? ORDER BY id", (kind,))]
-
-    def put(self, kind: str, ref: str, data: dict, expected: int | None = None):
-        old = self.get(kind, ref)
-        require((old is None and expected is None) or (old is not None and old["revision"] == expected), "STALE_REVISION")
-        data = {**data, "revision": (old["revision"] + 1 if old else 1)}
-        self.conn.execute("INSERT INTO records VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET revision=excluded.revision,data=excluded.data",
-                          (kind, ref, data["revision"], canonical(data)))
-        return data
-
-    def audit(self, kind: str, target: str, summary: dict):
-        # Account IDs, message bodies, challenges and proofs never enter audit.
-        self.conn.execute("INSERT INTO audit(at,kind,target_ref,summary) VALUES(?,?,?,?)",
-                          (self.clock.iso(), kind, digest(target)[:16], canonical(summary)))
-
-    def once(self, key: str, payload, operation):
-        require(type(key) is str and 0 < len(key) <= 256, "INVALID_IDEMPOTENCY_KEY")
-        fingerprint = digest(payload)
+    def context_state(self):
+        # Only metadata is used. Unrelated existing tables/records are untouched.
         with self.transaction():
-            old = self.conn.execute("SELECT fingerprint,result FROM idempotency WHERE key=?", (key,)).fetchone()
-            if old:
-                require(old[0] == fingerprint, "IDEMPOTENCY_CONFLICT")
-                return json.loads(old[1])
-            result = operation()
-            self.conn.execute("INSERT INTO idempotency VALUES(?,?,?)", (key, fingerprint, canonical(result)))
-            return result
-
-    def policy_revision(self):
-        with self.guard:
-            require(self.conn is not None, "STORAGE_UNAVAILABLE")
-            return int(self.conn.execute("SELECT value FROM metadata WHERE key='policy_revision'").fetchone()[0])
-
-    def bump_policy(self):
-        self.conn.execute("UPDATE metadata SET value=CAST(value AS INTEGER)+1 WHERE key='policy_revision'")
+            values = {}
+            for name in ("deployment_instance_id", "context_ownership_key"):
+                row = self.conn.execute("SELECT value FROM metadata WHERE key=?", (name,)).fetchone()
+                value = row[0] if row else ("maiidentity-" + uuid.uuid4().hex if name == "deployment_instance_id" else secrets.token_hex(32))
+                if row is None:
+                    self.conn.execute("INSERT INTO metadata VALUES(?,?)", (name, value))
+                values[name] = value
+            instance = opaque(values["deployment_instance_id"])
+            key = bytes.fromhex(values["context_ownership_key"])
+            require(len(key) == 32, "STORAGE_UNAVAILABLE")
+            return instance, key
 
     def close(self):
         with self.guard:

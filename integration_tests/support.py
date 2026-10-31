@@ -59,10 +59,10 @@ def stage(work, *, consumer=True):
     for name in ("plugin.py", "_manifest.json"):
         shutil.copyfile(ROOT/name, plugin/name)
     shutil.copytree(ROOT/"maiidentity", plugin/"maiidentity", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    cfg = {"plugin": {"enabled": True, "config_version": "3", "acknowledgement": "local-operator-reviewed", "instance_id": "instance",
-                      "writer_lock": str(work/"writer.lock")},
-           "identity": {"adapter_namespace": "adapter", "route_scope": "route", "people": [{"qq":"10001", "nickname":"妈妈", "prompt_template":"自然亲近"}], "accounts": [{"adapter_namespace": "adapter", "account_id": "10001"},
-                                                                      {"adapter_namespace": "adapter", "account_id": "10002"}]}}
+    cfg = {"plugin": {"enabled": True, "config_version": "4"},
+           "identity": {"adapter_namespace": "adapter", "route_scope": "route",
+                        "people": [{"qq":"10001", "nickname":"妈妈", "prompt_template":"自然亲近"}]},
+           "management": {"admin_accounts": ["10001"]}}
     (plugin/"config.toml").write_text(tomli_w.dumps(cfg), encoding="utf-8")
     if consumer:
         directory = work/"plugins/consumer"

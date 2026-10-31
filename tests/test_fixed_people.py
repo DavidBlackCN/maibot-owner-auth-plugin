@@ -11,11 +11,11 @@ from maiidentity.host.plugin import MaiIdentityPlugin
 from maiidentity.context.projection import match_person, snapshot, Projector, RULE
 from .test_identity import evidence
 from .test_default_install import message
-from .test_migration_lifecycle import context
+from .test_lifecycle import context
 
 
 def config(people):
-    return {'plugin': {'config_version': '3'}, 'identity': {'people': people}}
+    return {'plugin': {'config_version': '4'}, 'identity': {'people': people}}
 
 
 @pytest.mark.parametrize('rows', [
@@ -88,8 +88,8 @@ async def test_configured_unlisted_unknown_no_grants_and_hot_update(tmp_path, mo
         unknown = await p.replyer(session_id='s1', reply_message_id='missing', extra_prompt='')
         assert '本轮没有准确确定' in unknown['modified_kwargs']['extra_prompt']
         assert '此账号在当前会话没有适用' not in unknown['modified_kwargs']['extra_prompt']
-        assert p.db.conn.execute('SELECT count(*) FROM bindings').fetchone()[0] == 0
-        assert not p.db.records('grant') and not p.db.records('role')
+        assert [r[0] for r in p.db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")] == ['metadata']
+        assert not p.active.management.admin_accounts
         assert not (await p.get_vita_policy(account_id='10001', bot_account_id='99999',
             route_scope=None, stream_id='s1', action='wake'))['allowed']
 

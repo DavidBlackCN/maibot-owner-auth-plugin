@@ -74,8 +74,6 @@ jobs:
         run: .integration/host-env/Scripts/python tools/run_runner_smoke.py
       - name: Isolated Host
         run: .integration/host-env/Scripts/python tools/run_host_smoke.py --isolated-root "${{ runner.temp }}/maiidentity-host"
-      - name: Offline conversion tool regression
-        run: python tools/rehearse_migration.py
       - name: Collect matching verification results
         run: python tools/record_acceptance.py
       - name: Build and verify installable package

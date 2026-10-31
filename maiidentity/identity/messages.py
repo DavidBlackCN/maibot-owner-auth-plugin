@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-import base64
-import hashlib
 
 from ..shared.core import AccountKey, Clock, Denied, opaque, require
 
@@ -48,28 +46,6 @@ def host_message(raw: dict, *, instance: str, namespace: str, bot_account: str, 
                            user.get("user_cardname") or user.get("user_nickname") or "")
 
 
-def short_alias(original: str) -> str:
-    opaque(original)
-    if len(original) <= 12:
-        return original
-    return "m" + base64.b32encode(hashlib.sha1(original.encode()).digest()).decode().lower()[:6]
-
-
-class AliasHistory:
-    """Domain-only: caller must supply an attested COMPLETE request history."""
-    def __init__(self, *, instance, platform, namespace, stream, revision, originals, complete):
-        require(complete is True, "ALIAS_AMBIGUOUS")
-        self.boundary = tuple(opaque(v) for v in (instance, platform, namespace, stream, revision))
-        self.mapping = {}
-        for original in originals:
-            self.mapping.setdefault(short_alias(original), set()).add(original)
-
-    def resolve(self, alias, *, boundary):
-        require(tuple(boundary) == self.boundary, "SCOPE_MISMATCH")
-        candidates = self.mapping.get(alias, set())
-        require(len(candidates) == 1, "ALIAS_AMBIGUOUS")
-        return next(iter(candidates))
-
 
 class MessageResolver:
     def __init__(self, clock=None, ttl=300, capacity=2048):
@@ -94,23 +70,17 @@ class MessageResolver:
         self.cache.move_to_end(evidence.key)
         self.purge()
 
-    async def resolve(self, *, instance, platform, namespace, stream, message_id, query, parse,
-                      id_kind="exact", history=None, history_revision=None):
+    async def resolve(self, *, instance, platform, namespace, stream, message_id, query, parse):
         try:
             opaque(message_id)
             opaque(stream)
-            require(id_kind in ("exact", "alias"), "IDENTITY_UNRESOLVED")
-            canonical = message_id
-            if id_kind == "alias":
-                require(history is not None, "ALIAS_AMBIGUOUS")
-                canonical = history.resolve(message_id, boundary=(instance, platform, namespace, stream, history_revision))
-            key = (instance, platform, namespace, stream, canonical)
+            key = (instance, platform, namespace, stream, message_id)
             self.purge()
             cached = self.cache.get(key)
             if cached and cached[1] is None:
                 return None, "MESSAGE_ID_CONFLICT"
             try:
-                raw = await query(canonical, stream)
+                raw = await query(message_id, stream)
             except Exception:
                 raw = None
             if raw is not None:

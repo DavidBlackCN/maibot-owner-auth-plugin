@@ -8,9 +8,7 @@ from maibot_sdk.config import extract_plugin_config_version
 def test_host_webui_schema_builds_required_row_drafts_without_runtime_defaults():
     schema = MaiIdentityPlugin().get_webui_config_schema(plugin_id='identity', plugin_version='test')
     assert schema['plugin_id'] == 'identity'
-    accounts = schema['sections']['identity']['fields']['accounts']
-    assert accounts['default'] == [] and accounts['item_fields']['account_id']['default'] == ''
-    assert schema['sections']['roles']['fields']['entries']['hidden']
+    assert set(schema['sections']) == {'plugin', 'identity', 'context', 'management'}
     people = schema['sections']['identity']['fields']['people']
     assert people['default'] == [] and people['item_fields']['qq']['default'] == ''
     assert people['item_fields']['nickname']['default'] == ''
@@ -20,7 +18,6 @@ def test_host_webui_schema_builds_required_row_drafts_without_runtime_defaults()
     for section in schema['sections'].values():
         for field in section['fields'].values():
             if field['ui_type'] == 'select': assert '' not in (field.get('choices') or [])
-    assert schema['sections']['integrations']['fields']['cross_plugin_privileged_enabled']['disabled']
     assert schema['sections']['plugin']['fields']['config_version']['disabled']
 
 
@@ -38,7 +35,7 @@ def test_editor_drafts_are_not_valid_accounts_or_roles(patch):
 def test_minimal_host_config_needs_explicit_version_before_plugin_normalization():
     with pytest.raises(ValueError, match='config_version'):
         extract_plugin_config_version({'plugin': {'enabled': True}})
-    minimal = {'plugin': {'enabled': True, 'config_version': '3'}}
-    assert extract_plugin_config_version(minimal) == '3'
+    minimal = {'plugin': {'enabled': True, 'config_version': '4'}}
+    assert extract_plugin_config_version(minimal) == '4'
     normalized, _ = MaiIdentityPlugin().normalize_plugin_config(minimal)
-    assert MaiIdentityConfig.model_validate(normalized).management.vita_admin_accounts == []
+    assert MaiIdentityConfig.model_validate(normalized).management.admin_accounts == []

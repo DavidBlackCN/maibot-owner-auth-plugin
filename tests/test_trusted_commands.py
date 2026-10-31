@@ -5,7 +5,7 @@ from maiidentity.host.local_command import validate
 from maiidentity.host.plugin import MaiIdentityPlugin
 from maiidentity.shared.core import Denied,AccountKey
 from .test_self_service import command
-from .test_migration_lifecycle import context
+from .test_lifecycle import context
 
 @pytest.mark.asyncio
 async def test_official_entry_without_extension_and_no_api_write(tmp_path):
@@ -13,13 +13,13 @@ async def test_official_entry_without_extension_and_no_api_write(tmp_path):
     try:
         c=command('10001','/maiidentity register')
         result=await p.self_command(**c)
-        assert p.identity.lookup(AccountKey('qq','host-qq','10001')) is None
+        assert not p.active.management.admin_accounts
         assert '此命令不可用' in result[1]
         assert 'security.resolve_command' not in calls
-        assert not p.db.records('grant') and not p.db.records('role')
+        assert not p.active.management.admin_accounts
         before=p.db.conn.total_changes
-        assert not (await p.authorize_vita_command(**c,__maibot_command_ref__='fake'))['allowed']
-        assert not (await p.authorize(**c,owner=True))['ok']
+        assert not (await p.get_vita_policy(**c,__maibot_command_ref__='fake'))['allowed']
+        assert not (await p.is_admin(**c,owner=True))['is_admin']
         assert p.db.conn.total_changes==before
     finally: await p.on_unload()
 
@@ -40,7 +40,7 @@ async def test_inconsistent_envelope_rejected_before_write(tmp_path):
             if key != 'account_id':
                 with pytest.raises(Denied): validate(p,bad)
             await p.self_command(**bad)
-        assert p.db.conn.execute('SELECT count(*) FROM bindings').fetchone()[0]==0
+        assert not p.active.management.admin_accounts
         p.ready=False
         with pytest.raises(Denied): validate(p,c)
     finally: await p.on_unload()

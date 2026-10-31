@@ -33,8 +33,7 @@ async def run(work):
     from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
     from src.services.message_service import get_message_by_id
     from maiidentity.storage.database import Database, WriterLease
-    from maiidentity.identity.service import IdentityService
-    from maiidentity.shared.core import AccountKey, Denied
+    from maiidentity.shared.core import Denied
     manager = PluginRuntimeManager()
     manager.ensure_builtin_hook_specs_registered()
     supervisor = PluginSupervisor(plugin_dirs=[work/"plugins"], group_name="maiidentity-test", hook_spec_registry=manager._hook_spec_registry,
@@ -64,9 +63,9 @@ async def run(work):
         assert len([h for h in supervisor.component_registry.get_hook_handlers("maisaka.replyer.before_request") if h.plugin_id == PLUGIN_ID]) == 1
         report["cases"].append("native_supervisor_discovery_and_registration")
         assert (await call("call_peer", {"route": PLUGIN_ID+".get_contract"}, CONSUMER))["ok"]
-        denied = await call("call_peer", {"route": PLUGIN_ID+".authorize", "payload": {
+        denied = await call("call_peer", {"route": PLUGIN_ID+".is_admin", "payload": {
             "context_ref": "fake", "proof_ref": "fake", "is_owner": True, "caller_plugin_id": PLUGIN_ID}}, CONSUMER)
-        assert denied["error"]["code"] == "UNTRUSTED_CONTEXT"
+        assert denied == {"is_admin": False}
         report["cases"].append("native_cross_plugin_API_public_and_forgery_denial")
         messages = []
         for account, mid, name in (("10001", "native-A", "改名的小明"), ("10002", "native-B", "麦麦的妈妈")):
@@ -97,7 +96,7 @@ async def run(work):
         assert not planner.aborted and "extra_prompt" not in planner.kwargs
         report["cases"].extend(["native_message_DB_query_and_serializer", "exact_A_B_fixed_profile_and_unlisted", "nickname_claim_does_not_define_identity",
                                "multi_hook_context_preservation_and_idempotence", "planner_typed_items_unchanged"])
-        lock = WriterLease(work/"writer.lock")
+        lock = WriterLease(work/"data/plugins"/PLUGIN_ID/"writer.lock")
         try:
             lock.acquire()
         except Denied:
@@ -110,21 +109,23 @@ async def run(work):
         assert across_reload.kwargs["extra_prompt"].count("[MaiIdentity context v1]") == 1
         assert len([h for h in supervisor.component_registry.get_hook_handlers("maisaka.replyer.before_request") if h.plugin_id == PLUGIN_ID]) == 1
         report["cases"].append("native_reload_single_handler_and_writer_lease")
-        unloaded = await supervisor.unload_plugins([PLUGIN_ID], reason="offline-revocation-test")
-        assert unloaded.success
-        lock.acquire(); lock.release()
-        db = Database(work/"data/plugins"/PLUGIN_ID/"identity.db")
-        identity = IdentityService(db)
-        identity.revoke(AccountKey("qq", "adapter", "10001"), expected_epoch=1, key="synthetic-offline-revoke")
-        db.close()
-        assert await supervisor.reload_plugins([PLUGIN_ID], reason="offline-revocation-reload")
-        after = await manager.invoke_hook("maisaka.replyer.before_request", **{k: v for k, v in first.kwargs.items() if k != "hook_name"})
+        from src.chat.message_receive.chat_manager import chat_manager
+        session = await chat_manager.get_or_create_session('qq', '10001', None, account_id='99999', scope='route')
+        query = {'account_id':'10001', 'bot_account_id':'99999', 'route_scope':'route', 'stream_id':session.session_id}
+        assert await call('is_admin',query)=={'is_admin':True}
+        assert await call('get_vita_policy',dict(query,action='wake'))=={'policy_version':1,'allowed':True}
+        changed = tomlkit.parse(config_path.read_text(encoding='utf-8'))
+        changed['management']['admin_accounts'] = []
+        config_path.write_text(tomlkit.dumps(changed), encoding='utf-8')
+        # Genuine Host update delivery, rather than changing plugin internals.
+        assert await supervisor.notify_plugin_config_updated(PLUGIN_ID, config_data=changed.unwrap())
+        assert await call('is_admin',query)=={'is_admin':False}
+        assert not (await call('get_vita_policy',dict(query,action='wake')))['allowed']
+        assert await supervisor.reload_plugins([PLUGIN_ID], reason='admin-removal-persisted')
+        assert not (await call('get_vita_policy',dict(query,action='wake')))['allowed']
+        after = await manager.invoke_hook('maisaka.replyer.before_request', **{k:v for k,v in first.kwargs.items() if k!='hook_name'})
         assert '称呼为"妈妈"的人' in projection(after.kwargs['extra_prompt'])
-        db = Database(work/"data/plugins"/PLUGIN_ID/"identity.db")
-        assert IdentityService(db).lookup(AccountKey('qq', 'adapter', '10001')) is None
-        db.close()
-        assert after.kwargs["extra_prompt"].count("[MaiIdentity context v1]") == 1
-        report["cases"].append("account_revocation_persists_and_does_not_change_fixed_profile")
+        report['cases'].append('native_admin_removal_hot_update_restart_profile_independent')
         changed = tomlkit.parse(config_path.read_text(encoding='utf-8'))
         changed['identity']['people'][0]['nickname'] = '姐姐'
         config_path.write_text(tomlkit.dumps(changed), encoding='utf-8')
@@ -138,7 +139,7 @@ async def run(work):
         removed = await manager.invoke_hook('maisaka.replyer.before_request', **{k:v for k,v in edited.kwargs.items() if k!='hook_name'})
         assert '此账号在当前会话没有适用' in projection(removed.kwargs['extra_prompt'])
         report['cases'].append('native_config_edit_and_remove_replace_context_after_reload')
-        response = await supervisor.invoke_plugin("plugin.invoke_command", PLUGIN_ID, "owner_auth_status", args={}, timeout_ms=3000)
+        response = await supervisor.invoke_plugin("plugin.invoke_command", PLUGIN_ID, "maiidentity_status", args={}, timeout_ms=3000)
         assert response.payload["result"][0] is True
         report["cases"].append("native_registered_status_command_no_send")
         # An invalid own store must fail the genuine load path and release the
@@ -158,7 +159,7 @@ async def run(work):
     finally:
         await supervisor.stop()
         engine.dispose()
-    lock = WriterLease(work/"writer.lock"); lock.acquire(); lock.release()
+    lock = WriterLease(work/"data/plugins"/PLUGIN_ID/"writer.lock"); lock.acquire(); lock.release()
     assert not supervisor.authorization_manager.list_plugins() and not supervisor.api_registry.get_apis()
     report["cases"].append("native_shutdown_registry_and_lock_cleanup")
     report["passed"] = True

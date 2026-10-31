@@ -8,7 +8,7 @@ from maiidentity.host.plugin import MaiIdentityPlugin
 from maiidentity.host.routes import command_route
 from maiidentity.shared.core import AccountKey
 from .test_self_service import command
-from .test_migration_lifecycle import context
+from .test_lifecycle import context
 
 
 def route(bot='99999', stream='s1'):
@@ -24,7 +24,7 @@ async def test_empty_fallback_registration_denials_receipts_and_route_isolation(
     monkeypatch.setattr(ctx.send,'text',send)
     try:
         await p.self_command(**command('10001','/maiidentity register'))
-        assert p.identity.lookup(AccountKey('qq','host-qq','10001')) is None
+        assert not p.active.management.admin_accounts
         assert '此命令不可用' in send.call_args.args[0]
         assert send.await_count==1 and send.call_args.args[1]=='s1'
         assert 'config.get' not in calls
@@ -39,11 +39,11 @@ async def test_empty_fallback_registration_denials_receipts_and_route_isolation(
             c=command('10003','/maiidentity register');c['message'][field]=value
             await p.self_command(**c)
         assert send.await_count==before
-        assert p.identity.lookup(AccountKey('qq','host-qq','10003')) is None
+        assert not p.active.management.admin_accounts
         send.return_value=False
         result=await p.self_command(**command('99999','/maiidentity register'))
         assert 'normal send denied' in result[1] and send.await_count==before+1
-        assert not p.db.records('grant') and not p.db.records('role')
+        assert not p.active.management.admin_accounts
     finally:await p.on_unload()
 
 
@@ -88,7 +88,7 @@ async def test_routes_are_exact_private_aware_and_cancel_safe():
 @pytest.mark.asyncio
 async def test_multiple_adapter_accounts_public_policy_never_uses_fallback(tmp_path,monkeypatch):
     p=MaiIdentityPlugin();ctx,_=context(tmp_path);p._set_context(ctx)
-    p.set_plugin_config({'plugin':{'config_version':'3'},'management':{'vita_admin_accounts':['10001']}});await p.on_load()
+    p.set_plugin_config({'plugin':{'config_version':'4'},'management':{'admin_accounts':['10001']}});await p.on_load()
     monkeypatch.setattr(ctx.chat,'get_all_streams',AsyncMock(return_value=[route(),route('88888','s2')]))
     try:
         q=dict(account_id='10001',bot_account_id='88888',route_scope=None,stream_id='s2',action='manage_goal')

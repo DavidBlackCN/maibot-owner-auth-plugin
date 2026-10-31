@@ -1,80 +1,32 @@
-# 插件启用、部署身份与配置格式。
 [plugin]
-# 插件开关；布尔值，可选，默认 true。
 enabled = true
-# 配置格式固定为 "3"，默认 "3"，可选；不是发布版本。
-config_version = "3"
-# 历史兼容字符串；可选，默认空，不再作为启用门禁。
-acknowledgement = ""
-# 稳定实例标识；默认空自动生成；配置显式 roles 时必填并与 scope 一致。
-instance_id = ""
-# 可选绝对部署锁路径；默认空，使用授权数据目录中的锁。
-writer_lock = ""
-# 迁移标识字符串；默认空，普通安装不填；由离线迁移工具维护，请勿随意改动。
-migration_id = ""
+config_version = "4"
 
-# 账号命名空间及接入路由。
 [identity]
-# 本地稳定命名空间；可选，默认 host-qq；空值回退该默认值，账号条目必须与其一致。
+# 通常保持默认。route_scope 留空只匹配接入端未设置 scope 的会话。
 adapter_namespace = "host-qq"
-# 精确路由范围；可选，默认空，仅匹配 Host scope=None；非空填真实 scope，不是通配符。
 route_scope = ""
-# 显式账号表数组；可选，默认空；条目含 platform=qq、adapter_namespace、account_id 与 enabled。
-accounts = []
 
-# 固定身份名单：通过 WebUI 或本文件编辑，不通过消息命令修改。
+# 通过 WebUI 或本文件编辑名单，不提供消息写入命令。
 # WebUI 保存后生效；直接编辑文件后重载插件。
-# 每个身份使用一条 [[identity.people]]，最多 200 条；同一 QQ 同一群范围不能重复。
-# 以下示例默认停用，替换账号后启用。
+# 每个身份一条，最多 200 条；同一 QQ 同一群范围不能重复。
 [[identity.people]]
 qq = "123456789"
 nickname = "妈妈"
-# 可留空；支持 {nickname}，不包含聊天正文或账号占位符。
+# 可留空；支持 {nickname}。
 prompt_template = "与{nickname}自然亲近，可以撒娇，关心点到为止。"
-# 留空在群聊和私聊生效；填写群号只在该群生效。同 QQ 群专属条目优先。
+# 留空适用于群聊和私聊；群专属条目优先于全局条目。
 group_id = ""
+# 示例停用，替换 QQ 后启用。
 enabled = false
 
-# Vita 有限生活管理权限；与 Hush 管理员独立。
 [management]
-# Vita 管理员 QQ 字符串数组，最多 16 个且不重复（5–20 位非零开头数字）；可选，默认空表示无人有权。
-vita_admin_accounts = []
+# 管理员 QQ 字符串数组，最多 16 人；留空无人获权。
+# 当前用于 Vita 管理命令，不控制 Hush；固定身份不会自动成为管理员。
+admin_accounts = []
 
-# 高级本地角色条目；不代替 Vita 管理名单。
-[roles]
-# 本地角色表数组；可选，默认空；每项须有 account、role、scope，账号需在 identity.accounts 启用且匹配实例。
-entries = []
-
-# 模型可见上下文及缓存。
 [context]
-# 是否注入身份上下文；布尔值，可选，默认 true，不触发模型调用。
 enabled = true
-# 上下文 UTF-8 字节预算；整数 1200–8192，可选，默认 2048。
+# 以下通常保持默认：提示字节数上限、消息作者缓存秒数。
 budget_bytes = 2048
-# 消息缓存有效秒数；整数 10–3600，可选，默认 300。
 cache_ttl_seconds = 300
-# Planner 可信行动者开关；可选，仅允许 false，默认 false。
-planner_actor_enabled = false
-# 别名真实传输开关；可选，仅允许 false，默认 false。
-alias_enabled = false
-# 上下文模式；可选，仅允许 context_only，默认 context_only。
-guard_mode = "context_only"
-
-# 当前不可启用的安全扩展。
-[security]
-# 聊天双端绑定挑战开关；可选，仅允许 false，默认 false。
-binding_challenge_enabled = false
-# 原始提示词日志开关；可选，仅允许 false，默认 false。
-raw_prompt_logging = false
-
-# 旧模板兼容边界。
-[compatibility]
-# 旧模板渲染开关；可选，仅允许 false，默认 false。
-legacy_templates_enabled = false
-
-# 通用跨插件特权扩展，当前不开放。
-[integrations]
-# 通用集成传输开关；可选，仅允许 false，默认 false。
-enabled = false
-# 跨插件特权开关；可选，仅允许 false，默认 false。
-cross_plugin_privileged_enabled = false

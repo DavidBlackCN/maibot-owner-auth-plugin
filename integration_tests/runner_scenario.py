@@ -103,12 +103,12 @@ async def run(work):
         await asyncio.wait_for(ready.wait(), 20)
         assert PLUGIN_ID in registrations, logs[-5:]
         descriptor = await call("plugin.invoke_api", "get_contract")
-        assert descriptor["data"]["ready"] and descriptor["data"]["H03"].startswith("disabled")
+        assert descriptor["data"]["ready"] and descriptor["data"]["write_methods"] == "unsupported"
         peer = await call("plugin.invoke_api", "call_peer", {"route": PLUGIN_ID+".get_contract"}, CONSUMER)
         assert peer["ok"]
-        forged = await call("plugin.invoke_api", "call_peer", {"route": PLUGIN_ID+".authorize", "payload": {
+        forged = await call("plugin.invoke_api", "call_peer", {"route": PLUGIN_ID+".is_admin", "payload": {
             "is_owner": True, "verified": True, "issuer": PLUGIN_ID, "caller_plugin_id": PLUGIN_ID, "context_ref": "fake", "proof_ref": "fake"}}, CONSUMER)
-        assert forged["error"]["code"] == "UNTRUSTED_CONTEXT"
+        assert forged == {"is_admin": False}
         a = raw_message(name="改名的小明")
         b = raw_message("10002", "message-B", name="麦麦的情侣")
         for message in (a, b):
@@ -128,7 +128,7 @@ async def run(work):
         messages["message-A"] = {k: v for k, v in a.items() if k != "message_id"}
         conflict = await call("plugin.invoke_hook", "maiidentity_replyer", {"session_id": "test-stream", "reply_message_id": "message-A", "extra_prompt": "other"})
         assert '本轮没有准确确定' in projection(conflict['modified_kwargs']['extra_prompt'])
-        command = await call("plugin.invoke_command", "owner_auth_status")
+        command = await call("plugin.invoke_command", "maiidentity_status")
         assert command[0] and "no target" in command[1]
         response = await rpc.send_request("plugin.reload", PLUGIN_ID, {"plugin_id": PLUGIN_ID, "reason": "synthetic-test"}, timeout_ms=10000)
         assert response.error is None and PLUGIN_ID in revoked, (response, logs[-4:])
@@ -138,7 +138,7 @@ async def run(work):
         await asyncio.wait_for(process.wait(), 8)
         assert not authorization.list_plugins() and not apis.get_apis(), {"remaining": authorization.list_plugins(), "apis": [e.name for e in apis.get_apis()], "unregistered": revoked}
         from maiidentity.storage.database import WriterLease
-        lease = WriterLease(work/"writer.lock"); lease.acquire(); lease.release()
+        lease = WriterLease(work/"data/plugins"/PLUGIN_ID/"writer.lock"); lease.acquire(); lease.release()
         return {"passed": True, "sdk": "2.15.0", "layer": "T1", "business_ports": "synthetic_config_inventory_message_only",
             "cases": ["native_discovery_registration", "sdk_peer_api_call", "forged_caller_actor_proof_denied", "exact_author_fixed_profile",
                       "caller_identity_not_used_for_profile", "unlisted_nickname_not_profile", "multi_hook_preserved_idempotent", "planner_typed_skip",
