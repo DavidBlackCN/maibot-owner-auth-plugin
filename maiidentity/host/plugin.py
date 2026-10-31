@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import asyncio
-from ..runtime_versions import runtime_supported
 
 from maibot_sdk import API, Command, HookHandler, MaiBotPlugin
 from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
@@ -53,7 +52,6 @@ class MaiIdentityPlugin(MaiBotPlugin):
         if not cfg.plugin.enabled:
             return
         try:
-            require(runtime_supported(), "UNSUPPORTED_VERSION")
             loaded = await self.ctx.component.list_loaded_plugins()
             require(type(loaded) is list, "REGISTRY_UNAVAILABLE")
             for item in loaded:
