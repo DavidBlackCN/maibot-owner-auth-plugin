@@ -18,7 +18,8 @@ if __name__ == "__main__":
     assert all(report["passed"] is True for report in reports.values())
     assert all(reports[name]["candidate_files"] == candidate for name in ("unit", "runner", "host"))
     lock = json.loads((ROOT/"tests/fixtures/source-lock.json").read_text(encoding="utf-8"))
-    report = {"date": datetime.now(timezone(timedelta(hours=8))).date().isoformat(), "timezone": "Asia/Shanghai", "plugin_version": "3.2.2", "config_version": "3",
+    version = json.loads((ROOT/"_manifest.json").read_text(encoding="utf-8"))["version"]
+    report = {"date": datetime.now(timezone(timedelta(hours=8))).date().isoformat(), "timezone": "Asia/Shanghai", "plugin_version": version, "config_version": "3",
               "db_schema": 1, "api_major": "1", "production_approved": False, "host_commit": lock["host_commit"],
               "sdk_version": "2.15.0", "maivita_reference_commit": lock["maivita_commit"],
               "maivita_reference_scope": "historical contract reference only; not a joint runtime acceptance", "candidate_files": candidate,

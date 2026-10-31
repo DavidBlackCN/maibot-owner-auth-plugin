@@ -1,54 +1,90 @@
-name: deterministic-and-runner
-on: [push, pull_request]
+name: MaiIdentity checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+
 env:
-  MAIBOT_EVIDENCE_DIR: ../docs/reports/maibot-maiIdentity-plugin
+  PYTHONUTF8: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+
 jobs:
-  checks:
-    runs-on: windows-latest
+  unit:
+    name: Unit tests (${{ matrix.os }}, Host ${{ matrix.host }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, host: '1.3.18', sdk: '2.19.0'}
+          - {os: ubuntu-latest, host: '1.3.18', sdk: '2.19.0'}
+          - {os: ubuntu-latest, host: '1.3.15', sdk: '2.16.0'}
+          - {os: ubuntu-latest, host: '1.3.12', sdk: '2.15.0'}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      MAIBOT_HOST_VERSION: ${{ matrix.host }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m venv .venv
-      - run: .venv/Scripts/python -m pip install -r requirements-dev.txt
-      - run: .venv/Scripts/python tools/run_tests.py
-      - run: .venv/Scripts/python tools/setup_host_fixture.py
-      - run: python -m venv .integration/host-env
-      - run: .integration/host-env/Scripts/python -m pip install -r requirements-host.txt
-      - run: .integration/host-env/Scripts/python tools/run_runner_smoke.py
-      - run: .integration/host-env/Scripts/python tools/run_host_smoke.py --isolated-root "${{ github.workspace }}/.integration/ci-host"
-      - run: .venv/Scripts/python tools/rehearse_migration.py
-      - run: .venv/Scripts/python tools/record_acceptance.py
-      - run: .venv/Scripts/python tools/package.py
-      - name: Preserve current CI evidence
+      - name: Install test dependencies and selected SDK
+        run: python -m pip install -r requirements-dev.txt maibot-plugin-sdk==${{ matrix.sdk }}
+      - name: Unit tests (no model or platform calls)
+        env:
+          MAIBOT_EVIDENCE_DIR: ${{ runner.temp }}/maiidentity-unit
+        run: python tools/run_tests.py -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function
+      - name: Preserve unit reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: maiidentity-checks-${{ github.sha }}
-          path: |
-            ../docs/reports/maibot-maiIdentity-plugin/*.json
-            ../docs/reports/maibot-maiIdentity-plugin/unit.xml
-            ../docs/reports/maibot-maiIdentity-plugin/acceptance.json
-            dist/MaiIdentity-*.zip
+          name: maiidentity-unit-${{ matrix.os }}-${{ matrix.sdk }}-${{ github.sha }}
+          path: ${{ runner.temp }}/maiidentity-unit
 
-  linux-1-3-15:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  native-and-package:
+    name: Pinned Host, Runner and package
+    runs-on: windows-latest
+    timeout-minutes: 20
     env:
-      MAIBOT_HOST_VERSION: '1.3.15'
-      PYTHONDONTWRITEBYTECODE: '1'
+      MAIBOT_HOST_VERSION: '1.3.12'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12.15'
-      - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pip install --upgrade maibot-plugin-sdk==2.16.0
-      - name: Linux unit regressions on deployment SDK (no platform or model calls)
-        run: python -m pytest tests -q -p no:cacheprovider --junitxml "${{ runner.temp }}/linux-unit.xml"
-      - uses: actions/upload-artifact@v4
+          python-version: '3.13'
+      - name: Keep reports outside the checkout
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          evidence = Path(os.environ["RUNNER_TEMP"]) / "maiidentity-native"
+          evidence.mkdir(parents=True, exist_ok=True)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"MAIBOT_EVIDENCE_DIR={evidence}\n")
+      - name: Install baseline test dependencies
+        run: python -m pip install -r requirements-dev.txt maibot-plugin-sdk==2.15.0
+      - name: Baseline unit tests
+        run: python tools/run_tests.py -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function
+      - name: Prepare pinned Host source
+        run: python tools/setup_host_fixture.py
+      - name: Create separate Host environment
+        run: python -m venv .integration/host-env
+      - name: Install fixed Host dependencies
+        run: .integration/host-env/Scripts/python -m pip install -r requirements-host.txt
+      - name: Native Runner
+        run: .integration/host-env/Scripts/python tools/run_runner_smoke.py
+      - name: Isolated Host
+        run: .integration/host-env/Scripts/python tools/run_host_smoke.py --isolated-root "${{ runner.temp }}/maiidentity-host"
+      - name: Offline conversion tool regression
+        run: python tools/rehearse_migration.py
+      - name: Collect matching verification results
+        run: python tools/record_acceptance.py
+      - name: Build and verify installable package
+        run: python tools/package.py --output "${{ runner.temp }}/maiidentity-native/MaiIdentity.zip"
+      - name: Preserve reports and package
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: linux-1-3-15-${{ github.sha }}
-          path: ${{ runner.temp }}/linux-unit.xml
+          name: maiidentity-native-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/maiidentity-native
+            ${{ runner.temp }}/maiidentity-host/console.log

@@ -50,7 +50,8 @@ def verify(path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT/"dist/MaiIdentity-3.2.2.zip")
+    version = json.loads((ROOT/"_manifest.json").read_text(encoding="utf-8"))["version"]
+    parser.add_argument("--output", type=Path, default=ROOT/f"dist/MaiIdentity-{version}.zip")
     args = parser.parse_args()
     verify_acceptance()
     args.output.parent.mkdir(parents=True, exist_ok=True)

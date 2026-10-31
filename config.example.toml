@@ -19,7 +19,7 @@ migration_id = ""
 adapter_namespace = "host-qq"
 # 精确路由范围；可选，默认空，仅匹配 Host scope=None；非空填真实 scope，不是通配符。
 route_scope = ""
-# 显式账号表数组；可选，默认空；条目含 platform=qq、adapter_namespace、account_id 与 enabled，详见 README。
+# 显式账号表数组；可选，默认空；条目含 platform=qq、adapter_namespace、account_id 与 enabled。
 accounts = []
 
 # Vita 有限生活管理权限；与 Hush 管理员独立。
